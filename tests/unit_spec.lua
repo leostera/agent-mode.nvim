@@ -315,6 +315,21 @@ H.test("wrapped list items hang under their text", function()
   H.eq({ "- one two", "  three", "1. four", "   five" }, answer.wrap("- one two three\n1. four five", 10))
 end)
 
+H.test("answers fit between the number column and the window's edge", function()
+  local buf = H.buffer({ "x" })
+  local win = vim.api.nvim_get_current_win()
+  vim.wo[win].number = true
+  vim.wo[win].signcolumn = "yes"
+  vim.cmd("vsplit")
+  vim.api.nvim_win_set_width(0, 60)
+  local info = vim.fn.getwininfo(vim.api.nvim_get_current_win())[1]
+  local width = answer.text_width(buf)
+  H.truthy(info.textoff > 0, "the window has a number column")
+  -- Border "│ " plus the text must end before the window's right edge.
+  H.truthy(info.textoff + 2 + width <= info.width, string.format("textoff %d + 2 + %d > %d", info.textoff, width, info.width))
+  vim.cmd("only")
+end)
+
 H.test("answers leave fenced code blocks unwrapped", function()
   H.eq({ "```lua", "local a_long_name = another_long_name", "```" }, answer.wrap("```lua\nlocal a_long_name = another_long_name\n```", 10))
 end)

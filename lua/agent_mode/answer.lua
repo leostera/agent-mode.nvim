@@ -147,11 +147,17 @@ function M.highlight(lines, base_group)
   return result
 end
 
-local function text_width(bufnr)
+--- How wide answer text can be: the window's text area (without the number
+--- and sign columns), less the border, and at most 100 columns.
+function M.text_width(bufnr)
   local win = vim.fn.bufwinid(bufnr)
-  local width = win ~= -1 and vim.api.nvim_win_get_width(win) or 80
-  return math.min(width - 6, 100)
+  if win == -1 then
+    return 80
+  end
+  local info = vim.fn.getwininfo(win)[1]
+  return math.min(info.width - info.textoff - vim.fn.strdisplaywidth(BORDER) - 1, 100)
 end
+local text_width = M.text_width
 
 local function marks(bufnr)
   return vim.api.nvim_buf_get_extmarks(bufnr, M.namespace, 0, -1, { details = true })
