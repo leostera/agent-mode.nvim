@@ -56,6 +56,8 @@ agent-mode when you want a quick answer or change at the line you are on.
 ## Install
 
 Requires Neovim 0.12+ and one of the agent CLIs below, installed and logged in.
+lazy.nvim also installs [snacks.nvim](https://github.com/folke/snacks.nvim),
+which draws the settings menu.
 
 With [lazy.nvim](https://github.com/folke/lazy.nvim):
 
@@ -119,12 +121,10 @@ Commands:
 - `:AgentModeDismiss[!]`: clear the answer nearest the cursor (all with `!`)
 - `:AgentModeConfig`: a menu to change the agent, model, thinking, Lua,
   conversation, and prompt settings, start a new conversation, or copy your
-  settings as Lua for your config. It uses `vim.ui.select`, so with a picker
-  that provides it ([snacks.nvim](https://github.com/folke/snacks.nvim),
-  [fzf-lua](https://github.com/ibhagwan/fzf-lua),
-  [telescope-ui-select](https://github.com/nvim-telescope/telescope-ui-select.nvim),
-  [dressing.nvim](https://github.com/stevearc/dressing.nvim)) it gets that
-  picker's fuzzy search, e.g. across pi's models
+  settings as Lua for your config. It is drawn by
+  [snacks.nvim](https://github.com/folke/snacks.nvim)'s picker, so every list
+  is fuzzy-searchable (pi's models, for one); without snacks it falls back to
+  `vim.ui.select`
 - `:AgentModeNew`: start a new conversation with the agent
 - `:AgentModeLog`: show the last prompt, command, session, and raw reply
 

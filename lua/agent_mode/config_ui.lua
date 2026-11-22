@@ -1,12 +1,36 @@
 -- :AgentModeConfig: the settings you change most, as a menu.
 --
--- Menus and text entry go through vim.ui.select and vim.ui.input, so they
--- look and search like the rest of your setup: install a picker that
--- provides vim.ui.select (snacks.nvim, fzf-lua, telescope-ui-select,
--- dressing.nvim, mini.pick) for fuzzy search. Changes apply at once and
--- last until Neovim quits; "Copy as Lua" gives them to you for your config.
+-- Menus and text entry are drawn by snacks.nvim (a dependency in lazy.lua):
+-- a fuzzy-searchable picker and an input box. Without snacks they fall back
+-- to vim.ui.select and vim.ui.input. Changes apply at once and last until
+-- Neovim quits; "Copy as Lua" gives them to you for your config.
 
 local M = {}
+
+local function snacks()
+  local ok, Snacks = pcall(require, "snacks")
+  return ok and Snacks or nil
+end
+
+--- vim.ui.select, drawn by snacks' picker when it is installed.
+local function select(items, opts, on_choice)
+  local Snacks = snacks()
+  if Snacks and Snacks.picker and Snacks.picker.select then
+    return Snacks.picker.select(items, opts, on_choice)
+  end
+  return vim.ui.select(items, opts, on_choice)
+end
+
+--- vim.ui.input, drawn by snacks' input box when it is installed.
+local function input(opts, on_confirm)
+  local Snacks = snacks()
+  if Snacks and Snacks.input then
+    return Snacks.input(opts, on_confirm)
+  end
+  return vim.ui.input(opts, on_confirm)
+end
+
+M._select, M._input = select, input
 
 --- Reasoning levels each agent takes, lowest first.
 M.thinking_levels = {
@@ -84,9 +108,9 @@ local function pick_model(done)
         seen[model], items[#items + 1] = true, model
       end
     end
-    vim.ui.select(items, { prompt = "Model for " .. agent_label(config.agent) }, function(choice)
+    select(items, { prompt = "Model for " .. agent_label(config.agent) }, function(choice)
       if choice == TYPE_MODEL then
-        return vim.ui.input({ prompt = "Model: ", default = config.model or "" }, function(text)
+        return input({ prompt = "Model: ", default = config.model or "" }, function(text)
           if text then
             set({ model = text ~= "" and text or vim.NIL })
           end
@@ -122,7 +146,7 @@ local function entries()
       label = "Agent",
       value = agent_label(config.agent),
       change = function(done)
-        vim.ui.select(agent_mode().agent_names, { prompt = "Agent" }, function(choice)
+        select(agent_mode().agent_names, { prompt = "Agent" }, function(choice)
           if choice and choice ~= config.agent then
             -- Models and reasoning levels are per agent.
             set({ agent = choice, model = vim.NIL, thinking = vim.NIL })
@@ -137,7 +161,7 @@ local function entries()
       label = "Axo Session",
       value = config.axo.session,
       change = function(done)
-        vim.ui.input({ prompt = "Axo Session id (self: this one): ", default = config.axo.session }, function(text)
+        input({ prompt = "Axo Session id (self: this one): ", default = config.axo.session }, function(text)
           if text and text ~= "" then
             agent_mode().configure({ axo = { session = text } })
           end
@@ -152,7 +176,7 @@ local function entries()
         label = "Thinking",
         value = config.thinking or "default",
         change = function(done)
-          vim.ui.select(vim.list_extend({ "default" }, levels), { prompt = "Thinking" }, function(choice)
+          select(vim.list_extend({ "default" }, levels), { prompt = "Thinking" }, function(choice)
             if choice then
               set({ thinking = choice == "default" and vim.NIL or choice })
             end
@@ -166,7 +190,7 @@ local function entries()
       label = "Run Lua",
       value = config.lua == "allow" and "allow" or config.lua == "confirm" and "ask first" or "off",
       change = function(done)
-        vim.ui.select(lua_choices, {
+        select(lua_choices, {
           prompt = "Let the agent run Lua in Neovim",
           format_item = function(item)
             return item[1]
@@ -225,7 +249,7 @@ function M.open()
   for _, entry in ipairs(list) do
     width = math.max(width, vim.fn.strdisplaywidth(entry.label))
   end
-  vim.ui.select(list, {
+  select(list, {
     prompt = "agent-mode",
     kind = "agent_mode.config",
     format_item = function(entry)
