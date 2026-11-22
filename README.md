@@ -92,7 +92,7 @@ buffer you asked from changes only through the agent's reply, which
 agent-mode applies as one undo step, since it may have unsaved edits; other
 open files the agent changes are reloaded for you. Each run continues the same
 session, so the agent remembers earlier requests (see
-[One conversation per Neovim](#one-conversation-per-neovim)). Your agent's own
+[One session per Neovim](#one-session-per-neovim)). Your agent's own
 login, model access, and billing are used as they are.
 
 | Agent | `agent =` | How it runs | `thinking` |
@@ -136,16 +136,16 @@ One command, `:AgentMode`, with completion for its subcommands:
 - `:AgentMode dismiss[!]`: clear the answer nearest the cursor (all with `!`)
 - `:AgentMode agent [name]`: show or switch the agent
 - `:AgentMode config`: a menu to change the agent, model, thinking, Lua,
-  conversation, and prompt settings, start a new conversation, or copy your
+  session, and prompt settings, start a new session, or copy your
   settings as Lua for your config. It is drawn by
   [snacks.nvim](https://github.com/folke/snacks.nvim)'s picker, so every list
   is fuzzy-searchable (pi's models, for one); without snacks it falls back to
   `vim.ui.select`
-- `:AgentMode new`: start a new conversation with the agent
+- `:AgentMode new`: start a new session with the agent
 - `:AgentMode session`: show or hide the session split
-- `:AgentMode log`: show the last prompt, command, conversation, and raw reply
+- `:AgentMode log`: show the last prompt, command, session, and raw reply
 
-## One conversation per Neovim
+## One session per Neovim
 
 Every request from one Neovim goes to the same agent session, so you can
 build on earlier ones: ask why a function exists, then "rename it to match
@@ -160,7 +160,7 @@ history, so you can open it there later (`claude --resume`, `pi --resume`,
 So that each reply lands in the right place in the conversation, requests in a
 session run one at a time: a request asked while another is running shows
 "queued" by its line and starts when the first finishes. For requests that
-don't need each other, `conversation = false` runs each one on its own and all at
+don't need each other, `session = { enabled = false }` runs each one on its own and all at
 once, as before.
 
 ## The session split, for when a lot is going on
@@ -174,7 +174,7 @@ the cursor, and the line still shows what the agent is doing, but answers go
 to the session instead of under the line.
 
 ```lua
-vim.g.agent_mode = { session = { enabled = true, position = "right", width = 64 } }
+vim.g.agent_mode = { session = { split = { enabled = true, position = "right", width = 64 } } }
 ```
 
 The split is pinned: it shows in every tab, and a tab left with only the
@@ -252,8 +252,10 @@ vim.g.agent_mode = {
   luamode = "confirm",     -- let the agent run Lua: "confirm", "allow", or false
   luamode_timeout_ms = 10000, -- how long its asynchronous Lua may take
   max_turns = 8,           -- replies per request; each round of Lua is one
-  conversation = true,     -- one conversation for every request from this Neovim
-  session = { enabled = false, position = "right", width = 64 }, -- answers in a side split
+  session = {
+    enabled = true,        -- one agent session for every request from this Neovim
+    split = { enabled = false, position = "right", width = 64 }, -- answers in a side split
+  },
 }
 ```
 

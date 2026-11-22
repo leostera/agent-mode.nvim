@@ -29,10 +29,14 @@ local M = {}
 ---@field next? string|false
 ---@field prev? string|false
 
----@class agent_mode.SessionOptions
+---@class agent_mode.SessionSplitOptions
 ---@field enabled? boolean
 ---@field position? "right"|"left"
 ---@field width? integer
+
+---@class agent_mode.SessionOptions
+---@field enabled? boolean
+---@field split? agent_mode.SessionSplitOptions
 
 ---@class agent_mode.AxoOptions
 ---@field session? string
@@ -57,7 +61,6 @@ local M = {}
 ---@field luamode? "confirm"|"allow"|false
 ---@field luamode_timeout_ms? integer
 ---@field max_turns? integer
----@field conversation? boolean
 ---@field session? agent_mode.SessionOptions
 
 ---@type agent_mode.Config
@@ -121,16 +124,19 @@ M.defaults = {
   luamode_timeout_ms = 10000,
   -- How many replies a request may take; each round of Lua is one more.
   max_turns = 8,
-  -- Send every request from this Neovim to one conversation with the agent,
-  -- so you can refer to earlier questions, answers and results. Requests
-  -- then run one at a time, in order. :AgentMode new starts a fresh one.
-  -- false runs each request on its own, all at once.
-  conversation = true,
-  -- The session: a side split, pinned to every tab, that logs every request: your messages, the agent's tool
-  -- calls, its Lua, edits, reloaded files, and its answers. While it is on,
-  -- answers go there instead of under the line. :AgentMode session
-  -- shows or hides it.
-  session = { enabled = false, position = "right", width = 64 },
+  -- One agent session for every request from this Neovim.
+  session = {
+    -- Each request continues the same session with the agent, so you can
+    -- refer to earlier questions, answers and results; requests then run
+    -- one at a time, in order. :AgentMode new starts a fresh one. false runs
+    -- each request on its own, all at once.
+    enabled = true,
+    -- A side split, pinned to every tab, that logs every request: your
+    -- messages, the agent's tool calls, its Lua, edits, reloaded files, and
+    -- its answers. While it is on, answers go there instead of under the
+    -- line. :AgentMode session shows or hides it.
+    split = { enabled = false, position = "right", width = 64 },
+  },
 }
 
 ---@type agent_mode.Config|fun(): agent_mode.Config|nil
@@ -192,11 +198,12 @@ function M.check(config)
     vim.validate("luamode", config.luamode, one_of({ "confirm", "allow", false }))
     vim.validate("luamode_timeout_ms", config.luamode_timeout_ms, "number")
     vim.validate("max_turns", config.max_turns, "number")
-    vim.validate("conversation", config.conversation, "boolean")
     vim.validate("session", config.session, "table")
     vim.validate("session.enabled", config.session.enabled, "boolean")
-    vim.validate("session.position", config.session.position, one_of({ "right", "left" }))
-    vim.validate("session.width", config.session.width, "number")
+    vim.validate("session.split", config.session.split, "table")
+    vim.validate("session.split.enabled", config.session.split.enabled, "boolean")
+    vim.validate("session.split.position", config.session.split.position, one_of({ "right", "left" }))
+    vim.validate("session.split.width", config.session.split.width, "number")
     vim.validate("axo", config.axo, "table")
     vim.validate("axo.session", config.axo.session, "string")
     vim.validate("axo.cmd", config.axo.cmd, "string")

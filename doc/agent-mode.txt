@@ -56,7 +56,7 @@ Check your setup with: >vim
 
 While a request runs, the line shows what the agent is doing. You can keep
 editing and send more requests; in one conversation they run one at a time
-(see `conversation`). Edits are applied only if the lines they replace are still
+(see `session.enabled`). Edits are applied only if the lines they replace are still
 what the agent saw.
 
 These keys exist only in buffers that show an answer:
@@ -85,17 +85,17 @@ Change them with `answer_keymaps`.
 :AgentMode agent [name] Show the agent, or switch to {name}.
 
 :AgentMode config       A menu to change the agent, model, thinking, Lua,
-                        conversation and prompt settings for this session,
-                        start a new conversation, or copy the settings as
+                        session and prompt settings for this Neovim,
+                        start a new session, or copy the settings as
                         Lua. Drawn by snacks.nvim when installed, else
                         |vim.ui.select|.
 
-:AgentMode new          Start a new conversation with the agent.
+:AgentMode new          Start a new session with the agent.
 
 :AgentMode session      Show or hide the session split; the first time,
                         turn it on. |agent-mode-session|
 
-:AgentMode log          Show the last request's prompt, command, conversation
+:AgentMode log          Show the last request's prompt, command, session
                         and reply.
 
 ==============================================================================
@@ -124,8 +124,10 @@ reported by |:checkhealth|. Defaults:
       luamode = "confirm",     -- the agent's Lua: "confirm", "allow", false
       luamode_timeout_ms = 10000, -- for Lua that waits (ctx.async)
       max_turns = 8,           -- replies per request
-      conversation = true,     -- one conversation per Neovim
-      session = { enabled = false, position = "right", width = 64 },
+      session = {
+        enabled = true,        -- one agent session per Neovim
+        split = { enabled = false, position = "right", width = 64 },
+      },
       axo = { session = "self", cmd = "axo", timeout_ms = 600000 },
     }
 <
@@ -190,8 +192,8 @@ require("agent_mode").run({instruction}, {opts})            *agent_mode.run()*
 require("agent_mode").prompt()                           *agent_mode.prompt()*
     Open the prompt, as |<Plug>(AgentMode)| does.
 
-require("agent_mode").new_conversation()       *agent_mode.new_conversation()*
-    Start a new conversation.
+require("agent_mode").new_session()                 *agent_mode.new_session()*
+    Start a new session.
 
 ==============================================================================
 9. HIGHLIGHTS                                          *agent-mode-highlights*
@@ -208,10 +210,10 @@ AgentModeSessionFold, AgentModeSessionAgent, AgentModeSessionSummary
 ==============================================================================
 10. SESSION SPLIT                                         *agent-mode-session*
 
-With `session.enabled`, a split on the `session.position` side logs every
-request: what you asked and where, each tool call with its full command and
-duration, its Lua and what came back, edits, reloaded files, and its answers,
-in Markdown. Tool output is folded under each call: <CR> or <Tab> opens or
+With `session.split.enabled`, a split on the `session.split.position` side
+logs every request: what you asked and where, each tool call with its full
+command and duration, its Lua and what came back, edits, reloaded files, and
+its answers, in Markdown. Tool output is folded under each call: <CR> or <Tab> opens or
 closes it, q hides the split. You still ask inline and the line shows the
 agent's status, but answers go to the session. The split follows new entries
 unless you scroll up.

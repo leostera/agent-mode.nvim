@@ -84,15 +84,31 @@ local function agent_label(agent)
   return type(agent) == "string" and agent or "custom function"
 end
 
+--- What of `value` differs from `default`: tables key by key, so a
+--- changed `session.enabled` copies as just that; nil when nothing does.
+local function changed(value, default)
+  if type(value) == "table" and type(default) == "table" and not vim.islist(value) then
+    local out = {}
+    for key, v in pairs(value) do
+      out[key] = changed(v, default[key])
+    end
+    return next(out) and out or nil
+  end
+  if vim.deep_equal(value, default) then
+    return nil
+  end
+  return value
+end
+
 --- The settings as Lua for a config file: only what differs from the defaults.
 function M.snippet()
   local config = agent_mode().config
   local defaults = agent_mode().defaults
   local lines = { 'require("agent_mode").setup({' }
-  for _, key in ipairs({ "agent", "model", "thinking", "luamode", "conversation", "input", "session" }) do
-    local value = config[key]
-    if type(value) ~= "function" and not vim.deep_equal(value, defaults[key]) then
-      lines[#lines + 1] = string.format("  %s = %s,", key, vim.inspect(value))
+  for _, key in ipairs({ "agent", "model", "thinking", "luamode", "input", "session" }) do
+    local value = changed(config[key], defaults[key])
+    if value ~= nil and type(value) ~= "function" then
+      lines[#lines + 1] = string.format("  %s = %s,", key, (vim.inspect(value):gsub("\n", "\n  ")))
     end
   end
   lines[#lines + 1] = "})"
@@ -204,10 +220,10 @@ local function entries()
       end,
     }
     list[#list + 1] = {
-      label = "Conversation",
-      value = config.conversation and "one per Neovim" or "none (requests run at once)",
+      label = "Session",
+      value = config.session.enabled and "one per Neovim" or "none (requests run at once)",
       change = function(done)
-        set({ conversation = not config.conversation })
+        set({ session = { enabled = not config.session.enabled } })
         done()
       end,
     }
@@ -221,8 +237,8 @@ local function entries()
     end,
   }
   list[#list + 1] = {
-    label = "Session",
-    value = config.session.enabled and ("on, " .. config.session.position) or "off (answers inline)",
+    label = "Session split",
+    value = config.session.split.enabled and ("on, " .. config.session.split.position) or "off (answers inline)",
     change = function(done)
       local choices = { { "off (answers inline)", false }, { "on, right", "right" }, { "on, left", "left" } }
       select(choices, {
@@ -232,21 +248,21 @@ local function entries()
         end,
       }, function(choice)
         if choice then
-          local t = vim.deepcopy(config.session)
-          t.enabled = choice[2] ~= false
-          t.position = choice[2] or t.position
-          set({ session = t })
+          local split = vim.deepcopy(config.session.split)
+          split.enabled = choice[2] ~= false
+          split.position = choice[2] or split.position
+          set({ session = { split = split } })
         end
         done()
       end)
     end,
   }
-  local current = agent_mode().conversation()
+  local current = agent_mode().session()
   list[#list + 1] = {
-    label = "New conversation",
+    label = "New session",
     value = current and ("now " .. current.id:sub(1, 12) .. "…") or "none yet",
     change = function(done)
-      agent_mode().new_conversation()
+      agent_mode().new_session()
       done()
     end,
   }

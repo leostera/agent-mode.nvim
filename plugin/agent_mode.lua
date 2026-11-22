@@ -67,9 +67,9 @@ local subcommands = {
     end,
   },
   new = {
-    desc = "start a new conversation with the agent",
+    desc = "start a new session with the agent",
     run = function()
-      require("agent_mode").new_conversation()
+      require("agent_mode").new_session()
     end,
   },
   session = {
@@ -79,7 +79,7 @@ local subcommands = {
     end,
   },
   log = {
-    desc = "show the last prompt, command, conversation, and reply",
+    desc = "show the last prompt, command, session, and reply",
     run = function()
       require("agent_mode").show_log()
     end,

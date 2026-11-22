@@ -482,7 +482,7 @@ local function scripted_agent(replies, opts)
   agent_mode.setup(vim.tbl_extend("force", {
     keymap = false,
     luamode = "allow",
-    conversation = false,
+    session = { enabled = false },
     agent = function(request)
       prompts[#prompts + 1] = request.prompt
       local reply = replies[#prompts] or replies[#replies]
@@ -514,9 +514,9 @@ H.test("requests share one session and run one at a time", function()
   H.eq({ started = false }, calls[1].session, "the first request starts it")
   H.eq({ id = "sess-1", started = true }, calls[2].session, "the second continues it")
   H.truthy((calls[2].at - calls[1].at) / 1e6 >= 300, "the second waited for the first")
-  H.eq("sess-1", agent_mode.conversation().id)
-  agent_mode.new_conversation()
-  H.eq(nil, agent_mode.conversation())
+  H.eq("sess-1", agent_mode.session().id)
+  agent_mode.new_session()
+  H.eq(nil, agent_mode.session())
   agent_mode.dismiss(true)
 end)
 
@@ -530,7 +530,7 @@ H.test(":AgentMode config is a vim.ui.select menu that comes back after each cha
     { "agent-mode", "Model" }, { "Model for claude", "type a model" },
     { "agent-mode", "Thinking" }, { "Thinking", "max" },
     { "agent-mode", "Run Lua" }, { "Let the agent run Lua in Neovim", "off" },
-    { "agent-mode", "Conversation" },
+    { "agent-mode", "Session   " },
     { "agent-mode", "Copy as Lua" }, -- copies and closes the menu
   }
   local menus = {}
@@ -552,13 +552,13 @@ H.test(":AgentMode config is a vim.ui.select menu that comes back after each cha
   agent_mode.open_config()
   H.truthy(vim.wait(2000, function() return #script == 0 end), "the menu did not come back after each change")
   vim.ui.select, vim.ui.input = select, input
-  H.contains(table.concat(menus[1], "\n"), "Agent             pi")
+  H.contains(table.concat(menus[1], "\n"), "Agent          pi")
   H.eq("claude", agent_mode.config.agent)
   H.eq("opus", agent_mode.config.model)
   H.eq("max", agent_mode.config.thinking)
   H.eq(false, agent_mode.config.luamode)
-  H.eq(false, agent_mode.config.conversation)
-  H.eq('require("agent_mode").setup({\n  agent = "claude",\n  model = "opus",\n  thinking = "max",\n  luamode = false,\n  conversation = false,\n})', vim.fn.getreg('"'))
+  H.eq(false, agent_mode.config.session.enabled)
+  H.eq('require("agent_mode").setup({\n  agent = "claude",\n  model = "opus",\n  thinking = "max",\n  luamode = false,\n  session = {\n    enabled = false\n  },\n})', vim.fn.getreg('"'))
 end)
 
 H.test("files the agent changed on disk are reloaded, unless they have unsaved changes", function()
@@ -578,7 +578,7 @@ H.test("files the agent changed on disk are reloaded, unless they have unsaved c
     "sleep 1.1; echo 'local new = 2' > %s; echo 'local theirs = 2' > %s; printf '%%s' '{\"actions\":[{\"type\":\"message\",\"text\":\"ok\"}]}'",
     other, dirty
   )
-  agent_mode.setup({ keymap = false, conversation = false, agent = function()
+  agent_mode.setup({ keymap = false, session = { enabled = false }, agent = function()
     return { argv = { "sh", "-c", script }, stdin = "" }
   end })
   H.eq(nil, H.run_agent("change the other files", { bufnr = here, position = { row = 1, col = 0 } }))
@@ -617,8 +617,7 @@ H.test("with the session on, it logs the request, tool calls, Lua and the answer
   agent_mode.setup({
     keymap = false,
     luamode = "allow",
-    conversation = false,
-    session = { enabled = true, position = "right", width = 50 },
+    session = { enabled = false, split = { enabled = true, position = "right", width = 50 } },
     agent = function()
       turn = turn + 1
       return { argv = { H.root .. "/tests/fake_agent.sh", replies[turn], "0" }, stdin = "", output = "pi-json" }
@@ -666,7 +665,7 @@ H.test("with the session on, it logs the request, tool calls, Lua and the answer
   H.truthy(view.win(), "it shows again")
   agent_mode.toggle_session()
   H.eq(nil, view.win(), ":AgentMode session hides it")
-  agent_mode.configure({ session = { enabled = false } })
+  agent_mode.configure({ session = { split = { enabled = false } } })
 end)
 
 H.test("an answer taller than the window shows what fits and how to read the rest", function()

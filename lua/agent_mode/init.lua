@@ -62,7 +62,7 @@ end
 
 local function system_prompt()
   local prompt = protocol.system_prompt
-  if M.config.conversation then
+  if M.config.session.enabled then
     prompt = prompt .. protocol.session_prompt
   end
   if M.config.luamode then
@@ -77,7 +77,7 @@ end
 --- The command for this request, from the configured agent.
 --- The session requests continue, started fresh when the agent changes.
 local function current_session()
-  if not M.config.conversation then
+  if not M.config.session.enabled then
     return nil
   end
   if not conversation or conversation.agent ~= M.config.agent then
@@ -138,7 +138,7 @@ local function agent_name()
 end
 
 local function session_on()
-  return M.config.session.enabled
+  return M.config.session.split.enabled
 end
 
 --- Log to the session split when it is on: `session_view[kind](request, ...)`.
@@ -150,7 +150,7 @@ end
 
 local function show_answer(request, text)
   if session_on() and request.session_started then
-    session_view.open(M.config.session)
+    session_view.open(M.config.session.split)
     return session_view.answer(request, agent_name(), text)
   end
   answer.show(request.snapshot.bufnr, answer_row(request), text, {
@@ -793,7 +793,7 @@ function M.run(instruction, opts)
   request.id = request_count
   request.started_at = vim.uv.hrtime()
   if session_on() then
-    session_view.open(M.config.session)
+    session_view.open(M.config.session.split)
     session_view.request(request)
   end
 
@@ -809,7 +809,7 @@ function M.run(instruction, opts)
     if request.finished then
       return
     end
-    if not M.config.conversation then
+    if not M.config.session.enabled then
       return start_agent(request)
     end
     if session_busy then
@@ -863,13 +863,13 @@ end
 
 --- Start a fresh conversation for the next request. Requests already
 --- running finish in the old one.
-function M.new_conversation()
+function M.new_session()
   conversation = nil
-  notify("the next request starts a new conversation")
+  notify("the next request starts a new session")
 end
 
 --- The conversation requests continue, if one has started.
-function M.conversation()
+function M.session()
   return conversation and conversation.started and vim.deepcopy(conversation) or nil
 end
 
@@ -935,26 +935,26 @@ local function apply(config)
     vim.keymap.set({ "n", "x" }, config.keymap, "<Plug>(AgentMode)", { desc = "agent-mode: ask the agent" })
     mapped_keymap = config.keymap
   end
-  local was = M.config and M.config.session.enabled
+  local was = M.config and M.config.session.split.enabled
   M.config = config
   -- The session split shows while it is on: open it when turned on (once
   -- Neovim has started), close it when turned off.
-  if config.session.enabled and not was then
+  if config.session.split.enabled and not was then
     if vim.v.vim_did_enter == 1 then
       vim.schedule(function()
-        session_view.open(M.config.session)
+        session_view.open(M.config.session.split)
       end)
     else
       vim.api.nvim_create_autocmd("VimEnter", {
         once = true,
         callback = function()
-          if M.config.session.enabled then
-            session_view.open(M.config.session)
+          if M.config.session.split.enabled then
+            session_view.open(M.config.session.split)
           end
         end,
       })
     end
-  elseif was and not config.session.enabled then
+  elseif was and not config.session.split.enabled then
     session_view.close()
   end
 end
@@ -962,10 +962,10 @@ end
 --- Show or hide the session split. Showing it turns it on, so answers go
 --- there; hiding it leaves it on until the next request reopens it.
 function M.toggle_session()
-  if not M.config.session.enabled then
-    return M.configure({ session = { enabled = true } })
+  if not M.config.session.split.enabled then
+    return M.configure({ session = { split = { enabled = true } } })
   end
-  session_view.toggle(M.config.session)
+  session_view.toggle(M.config.session.split)
 end
 
 --- Set agent-mode's settings: `opts` over `vim.g.agent_mode` over the
