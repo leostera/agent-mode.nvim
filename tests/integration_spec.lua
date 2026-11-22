@@ -638,6 +638,26 @@ H.test("with the transcript on, it logs the request, tool calls, Lua and the ans
   agent_mode.configure({ transcript = { enabled = false } })
 end)
 
+H.test("an answer taller than the window shows what fits and how to read the rest", function()
+  local buf = H.buffer({ "local a = 1" }, "lua")
+  local long = {}
+  for i = 1, 200 do
+    long[i] = "line " .. i
+  end
+  fake_agent({ actions = { { type = "message", text = table.concat(long, "\n\n") } } })
+  H.eq(nil, H.run_agent("explain", { position = { row = 1, col = 0 } }))
+  local a = require("agent_mode.answer")
+  local shown = a.list(buf)[1].lines
+  H.truthy(#shown <= vim.api.nvim_win_get_height(0), "fits in the window: " .. #shown)
+  H.contains(shown[#shown - 1], "more lines · <CR> on the line to read it all")
+  -- <CR> opens all of it, in a window that scrolls.
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  local win = a.enter()
+  H.eq(400, vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win)), "title + 399 lines")
+  vim.api.nvim_win_close(win, true)
+  agent_mode.dismiss(true)
+end)
+
 H.test("lua results go back to the agent until it answers", function()
   local buf = H.buffer({ "local a = 1" }, "lua")
   local prompts = scripted_agent({

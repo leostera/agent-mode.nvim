@@ -12,6 +12,7 @@ M.namespace = vim.api.nvim_create_namespace("agent_mode_answer")
 vim.api.nvim_set_hl(0, "AgentModeAnswer", { link = "NormalFloat", default = true })
 vim.api.nvim_set_hl(0, "AgentModeAnswerBorder", { link = "FloatBorder", default = true })
 vim.api.nvim_set_hl(0, "AgentModeAnswerTitle", { link = "Title", default = true })
+vim.api.nvim_set_hl(0, "AgentModeAnswerMore", { link = "Comment", default = true })
 
 local BORDER = "│ "
 
@@ -158,6 +159,14 @@ function M.text_width(bufnr)
   return math.min(info.width - info.textoff - vim.fn.strdisplaywidth(BORDER) - 1, 100)
 end
 local text_width = M.text_width
+
+--- How many lines of an answer to show inline: what fits in the window
+--- below a title, with a little of the code still in view.
+function M.max_inline_lines(bufnr)
+  local win = vim.fn.bufwinid(bufnr)
+  local height = win ~= -1 and vim.api.nvim_win_get_height(win) or 24
+  return math.max(height - 4, 6)
+end
 
 local function marks(bufnr)
   return vim.api.nvim_buf_get_extmarks(bufnr, M.namespace, 0, -1, { details = true })
@@ -376,9 +385,28 @@ function M.show(bufnr, row, text, opts)
   local virt_lines = {
     { { BORDER, "AgentModeAnswerBorder" }, { opts.title, "AgentModeAnswerTitle" } },
   }
-  for _, chunks in ipairs(M.highlight(M.wrap(text, text_width(bufnr)), "AgentModeAnswer")) do
+  -- Neovim cannot scroll through virtual lines: an answer taller than the
+  -- window could never be read to the end. Show what fits and say how to
+  -- open the rest, which <CR> shows in a window that scrolls.
+  local highlighted = M.highlight(M.wrap(text, text_width(bufnr)), "AgentModeAnswer")
+  local fits = M.max_inline_lines(bufnr)
+  local hidden = #highlighted > fits and #highlighted - (fits - 1) or 0
+  for i, chunks in ipairs(highlighted) do
+    if hidden > 0 and i > fits - 1 then
+      break
+    end
     table.insert(chunks, 1, { BORDER, "AgentModeAnswerBorder" })
     virt_lines[#virt_lines + 1] = chunks
+  end
+  if hidden > 0 then
+    local key = opts.keys and opts.keys.enter
+    virt_lines[#virt_lines + 1] = {
+      { BORDER, "AgentModeAnswerBorder" },
+      {
+        string.format("… %d more line%s%s", hidden, hidden == 1 and "" or "s", key and (" · " .. key .. " on the line to read it all") or ""),
+        "AgentModeAnswerMore",
+      },
+    }
   end
   -- A blank line after the answer, so it is easy to see where it ends.
   virt_lines[#virt_lines + 1] = { { "", "Normal" } }
