@@ -90,6 +90,11 @@ local defaults = {
   lua_timeout_ms = 10000,
   -- How many replies a request may take; each round of Lua is one more.
   max_turns = 8,
+  -- Send every request from this Neovim to one conversation with the agent,
+  -- so you can refer to earlier questions, answers and results. Requests
+  -- then run one at a time, in order. :AgentModeNew starts a fresh one.
+  -- false runs each request on its own, all at once.
+  session = true,
 }
 
 M.config = vim.deepcopy(defaults)
@@ -98,6 +103,9 @@ M.config = vim.deepcopy(defaults)
 M.last = nil
 
 local requests = {} -- running requests, in the order they were asked
+local session = nil -- the conversation requests continue: { agent, id, started }
+local session_queue = {} -- requests waiting for the session
+local session_busy = false
 local axo_queue = {} -- delegated requests waiting for the one in flight
 local axo_busy = false
 
@@ -114,6 +122,9 @@ end
 
 local function system_prompt()
   local prompt = protocol.system_prompt
+  if M.config.session then
+    prompt = prompt .. protocol.session_prompt
+  end
   if M.config.lua then
     prompt = prompt .. protocol.lua_prompt
   end
@@ -124,12 +135,25 @@ local function system_prompt()
 end
 
 --- The command for this request, from the configured agent.
+--- The session requests continue, started fresh when the agent changes.
+local function current_session()
+  if not M.config.session then
+    return nil
+  end
+  if not session or session.agent ~= M.config.agent then
+    session = { agent = M.config.agent, id = nil, started = false }
+  end
+  return session
+end
+
 local function agent_command(prompt)
   local agent, err = agents.resolve(M.config.agent)
   if not agent then
     return nil, err
   end
+  local active = current_session()
   local ok, command = pcall(agent, {
+    session = active and { id = active.id, started = active.started } or nil,
     system_prompt = system_prompt(),
     prompt = prompt,
     model = M.config.model,
@@ -183,6 +207,7 @@ end
 local start_next_delegated -- defined with the Axo flow below
 local run_lua_action -- defined with the actions below
 local start_agent -- defined below; called again for each turn
+local start_next_in_session -- defined with start_agent
 
 local function finish(request, err)
   if request.finished then
@@ -216,6 +241,16 @@ local function finish(request, err)
   if request.delegated and request.sent then
     axo_busy = false
     vim.schedule(start_next_delegated)
+  end
+  for i, r in ipairs(session_queue) do
+    if r == request then
+      table.remove(session_queue, i)
+      break
+    end
+  end
+  if request.holds_session then
+    session_busy = false
+    vim.schedule(start_next_in_session)
   end
   if request.on_done then
     request.on_done(err)
@@ -398,6 +433,15 @@ local function handle_reply(request, result, reply)
     )
   end
 
+  if request.session and request.command then
+    local id = request.command.session_id
+      or (request.command.read_session_id and request.command.read_session_id(result))
+    if id and request.session == session then
+      session.id, session.started = id, true
+      log.session = id
+    end
+  end
+
   local response, parse_err = protocol.parse(reply)
   if not response then
     return finish(request, parse_err)
@@ -439,6 +483,20 @@ end
 
 --- The first prompt, followed by every earlier reply and what its Lua did.
 local function turn_prompt(request)
+  -- In a session the agent remembers its replies; send only what is new.
+  if request.session and #request.turns > 0 then
+    local parts = {}
+    for j, result in ipairs(request.turns[#request.turns].results) do
+      parts[#parts + 1] = string.format("Result of lua action %d:\n%s\n\n", j, result)
+    end
+    parts[#parts + 1] = string.format(
+      "Continue with your next reply (step %d of at most %d). Reply with exactly one JSON object in the"
+        .. " same format as before, {\"summary\": ..., \"actions\": [...]}, and nothing else.",
+      #request.turns + 1,
+      M.config.max_turns
+    )
+    return table.concat(parts)
+  end
   local parts = { request.first_prompt }
   for i, turn in ipairs(request.turns) do
     parts[#parts + 1] = string.format("\n\nYour reply %d:\n%s", i, vim.trim(turn.reply))
@@ -471,14 +529,14 @@ start_agent = function(request)
   end
   local prompt = turn_prompt(request)
   request.log.prompt = prompt
-  if #request.turns > 0 then
-    start_timeout(request, M.config.timeout_ms)
-  end
+  start_timeout(request, M.config.timeout_ms)
 
+  request.session = current_session()
   local command, command_err = agent_command(prompt)
   if not command then
     return finish(request, command_err)
   end
+  request.command = command
   request.log.argv = command.argv
 
   local make_decoder = agents.decoders[command.output or "text"]
@@ -516,6 +574,23 @@ start_agent = function(request)
   request.stop = function()
     process:kill(15)
   end
+end
+
+--- Start the oldest request waiting for the session, if it is free.
+start_next_in_session = function()
+  if session_busy then
+    return
+  end
+  local request = table.remove(session_queue, 1)
+  if not request then
+    return
+  end
+  if request.finished then
+    return start_next_in_session()
+  end
+  session_busy = true
+  request.holds_session = true
+  start_agent(request)
 end
 
 -- Axo Sessions ----------------------------------------------------------------
@@ -678,13 +753,20 @@ function M.run(instruction, opts)
     return start_next_delegated()
   end
 
-  start_timeout(request, M.config.timeout_ms)
   request.spinner:set_status("asking the language servers…")
   lsp.code_actions(bufnr, position, M.config.code_action_timeout_ms, function(code_actions)
     request.code_actions = code_actions
-    if not request.finished then
-      start_agent(request)
+    if request.finished then
+      return
     end
+    if not M.config.session then
+      return start_agent(request)
+    end
+    if session_busy then
+      request.spinner:set_status("queued behind another request…")
+    end
+    session_queue[#session_queue + 1] = request
+    start_next_in_session()
   end)
 end
 
@@ -729,6 +811,18 @@ function M.prompt()
   end
 end
 
+--- Start a fresh conversation for the next request. Requests already
+--- running finish in the old one.
+function M.new_session()
+  session = nil
+  notify("the next request starts a new conversation")
+end
+
+--- The conversation requests continue, if one has started.
+function M.session()
+  return session and session.started and vim.deepcopy(session) or nil
+end
+
 --- Clear the inline answer nearest the cursor, or all of them with `all`.
 function M.dismiss(all)
   local bufnr = vim.api.nvim_get_current_buf()
@@ -749,6 +843,7 @@ function M.show_log()
     end
   end
   section("Error", log.error)
+  section("Session", log.session)
   section("Command", log.argv and table.concat(log.argv, " "):sub(1, 400))
   section("Prompt", log.prompt)
   section("Agent stdout", log.stdout)

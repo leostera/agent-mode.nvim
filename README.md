@@ -27,6 +27,9 @@ where you are, and copying the result back. agent-mode skips all of that:
   function", "add error handling". Renames go through your language server
   when one is attached; other changes are applied to the buffer as a single
   undo step.
+- **Keep the thread.** Every request from one Neovim goes to the same
+  conversation, so "do the same for the second caller" or "why did you
+  pick that name?" just work.
 - **Keep going.** Fire off as many requests as you like while you move through
   the file. Each shows a live status next to its line, and each answer or edit
   lands next to the line it was about, even as lines move.
@@ -70,15 +73,17 @@ Then put the cursor somewhere, press `<leader>a`, and type.
 ## Pick your agent
 
 agent-mode runs your agent's CLI once per request, with no tools: the agent
-only answers, and agent-mode applies the answer. Your agent's own login,
-model access, and billing are used as they are.
+only answers, and agent-mode applies the answer. Each run continues the same
+session, so the agent remembers earlier requests (see
+[One conversation per Neovim](#one-conversation-per-neovim)). Your agent's own
+login, model access, and billing are used as they are.
 
 | Agent | `agent =` | How it runs | `thinking` |
 | --- | --- | --- | --- |
-| [Claude Code](https://docs.anthropic.com/claude-code) | `"claude"` | `claude --print --tools ""`, no session saved, no MCP servers | `--effort`: `low` … `max` |
-| [Codex](https://github.com/openai/codex) | `"codex"` | `codex exec --sandbox read-only --ephemeral` | `model_reasoning_effort`: `minimal` … `high` (default `low`) |
-| [OpenCode](https://opencode.ai) | `"opencode"` | `opencode run --agent plan` (read-only) | n/a |
-| [pi](https://pi.dev) | `"pi"` | `pi --print --no-tools --no-session` | `off` … `xhigh` (default `off`) |
+| [Claude Code](https://docs.anthropic.com/claude-code) | `"claude"` | `claude --print --tools ""`, `--session-id`/`--resume`, no MCP servers | `--effort`: `low` … `max` |
+| [Codex](https://github.com/openai/codex) | `"codex"` | `codex exec --sandbox read-only`, then `codex exec resume <id>` | `model_reasoning_effort`: `minimal` … `high` (default `low`) |
+| [OpenCode](https://opencode.ai) | `"opencode"` | `opencode run --agent plan --session <id>` (read-only) | n/a |
+| [pi](https://pi.dev) | `"pi"` | `pi --print --no-tools --session-id <id>` | `off` … `xhigh` (default `off`) |
 | anything else | a function | see [Custom agents](#custom-agents) | |
 
 Choose a model with `model`, in the format your agent expects:
@@ -112,7 +117,26 @@ Commands:
 - `:AgentModeAgent [name]`: show or switch the agent, with completion
 - `:AgentModeCancel`: stop the requests on the cursor line, or all of them
 - `:AgentModeDismiss[!]`: clear the answer nearest the cursor (all with `!`)
-- `:AgentModeLog`: show the last prompt, command, and raw reply
+- `:AgentModeNew`: start a new conversation with the agent
+- `:AgentModeLog`: show the last prompt, command, session, and raw reply
+
+## One conversation per Neovim
+
+Every request from one Neovim goes to the same agent session, so you can
+build on earlier ones: ask why a function exists, then "rename it to match
+what you just said"; have it find the callers, then "add a test for the
+second one". Each request still shows the agent the buffer as it is now.
+
+The session starts with your first request. It lives in your agent's own
+history, so you can open it there later (`claude --resume`, `pi --resume`,
+`codex resume`, `opencode`), and it ends when you quit Neovim or run
+`:AgentModeNew`.
+
+So that each reply lands in the right place in the conversation, requests in a
+session run one at a time: a request asked while another is running shows
+"queued" by its line and starts when the first finishes. For requests that
+don't need each other, `session = false` runs each one on its own and all at
+once, as before.
 
 ## Let the agent look around and show you things
 
@@ -169,6 +193,7 @@ require("agent_mode").setup({
   lua = "confirm",         -- let the agent run Lua: "confirm", "allow", or false
   lua_timeout_ms = 10000,  -- how long its asynchronous Lua may take
   max_turns = 8,           -- replies per request; each round of Lua is one
+  session = true,          -- one conversation for every request from this Neovim
 })
 ```
 

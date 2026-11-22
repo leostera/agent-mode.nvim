@@ -68,6 +68,15 @@ Make the smallest change that does what the user asked. Change only what the
 instruction covers, and keep the surrounding style.
 ]]
 
+--- Added to the system prompt when requests share one conversation.
+M.session_prompt = [[
+
+Every request from this Neovim comes to you in this same conversation, so
+the user may refer to earlier questions, your answers, and what your Lua
+found ("the second caller", "do the same here"). Each request shows the
+buffer and cursor as they are now; trust that over what you saw before.
+]]
+
 --- Added to the system prompt when the user lets the agent run Lua.
 M.lua_prompt = [[
 
@@ -257,6 +266,10 @@ function M.parse(text)
       return fail("agent reply is not valid JSON: %s", object:sub(1, 200))
     end
     decoded = value
+  end
+  if (type(decoded.actions) ~= "table" or #decoded.actions == 0) and is_nonempty_string(decoded.summary) then
+    -- Some models put a short answer in the summary and leave out the actions.
+    decoded.actions = { { type = "message", text = decoded.summary } }
   end
   if type(decoded.actions) ~= "table" or #decoded.actions == 0 then
     return fail("agent reply has no actions")

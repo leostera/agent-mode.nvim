@@ -482,6 +482,7 @@ local function scripted_agent(replies, opts)
   agent_mode.setup(vim.tbl_extend("force", {
     keymap = false,
     lua = "allow",
+    session = false,
     agent = function(request)
       prompts[#prompts + 1] = request.prompt
       local reply = replies[#prompts] or replies[#replies]
@@ -490,6 +491,34 @@ local function scripted_agent(replies, opts)
   }, opts or {}))
   return prompts
 end
+
+H.test("requests share one session and run one at a time", function()
+  local buf = H.buffer({ "local a = 1", "local b = 2" }, "lua")
+  local calls = {}
+  agent_mode.setup({
+    keymap = false,
+    agent = function(request)
+      calls[#calls + 1] = { session = request.session, at = vim.uv.hrtime() }
+      return {
+        argv = { H.root .. "/tests/fake_agent.sh", '{"actions":[{"type":"message","text":"ok"}]}', "0.3" },
+        stdin = "",
+        session_id = request.session.id or "sess-1",
+      }
+    end,
+  })
+  local done = 0
+  for row = 1, 2 do
+    agent_mode.run("q" .. row, { bufnr = buf, position = { row = row, col = 0 }, on_done = function() done = done + 1 end })
+  end
+  H.truthy(vim.wait(5000, function() return done == 2 end, 20))
+  H.eq({ started = false }, calls[1].session, "the first request starts it")
+  H.eq({ id = "sess-1", started = true }, calls[2].session, "the second continues it")
+  H.truthy((calls[2].at - calls[1].at) / 1e6 >= 300, "the second waited for the first")
+  H.eq("sess-1", agent_mode.session().id)
+  agent_mode.new_session()
+  H.eq(nil, agent_mode.session())
+  agent_mode.dismiss(true)
+end)
 
 H.test("lua results go back to the agent until it answers", function()
   local buf = H.buffer({ "local a = 1" }, "lua")
@@ -500,7 +529,7 @@ H.test("lua results go back to the agent until it answers", function()
   H.eq(nil, H.run_agent("what is it?", { position = { row = 1, col = 0 } }))
   H.eq(2, #prompts)
   H.contains(prompts[1], "Neovim: Neovim 0.")
-  H.contains(prompts[2], "Your reply 1:")
+  H.contains(prompts[2], "Your reply 1:", "without a session, the transcript is resent")
   H.contains(prompts[2], "Result of lua action 1:\nreturned:\n{\n  line = 1,\n  n = 42\n}")
   H.contains(prompts[2], "step 2 of at most 8). Reply with exactly one JSON object")
   agent_mode.dismiss(true)
