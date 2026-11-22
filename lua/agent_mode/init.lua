@@ -1137,30 +1137,6 @@ end
 --- The agents `:AgentMode agent` can switch to.
 M.agent_names = vim.list_extend(vim.deepcopy(agents.presets), { "axo" })
 
--- Finding this Neovim ---------------------------------------------------------
-
---- Tell agent-mode's MCP server where this Neovim is: a file per Neovim in
---- the state folder with its address and working folder.
-local registration = vim.fs.joinpath(vim.fn.stdpath("state"), "agent-mode", "servers", vim.fn.getpid() .. ".json")
-local function register()
-  if vim.v.servername == "" then
-    return
-  end
-  vim.fn.mkdir(vim.fs.dirname(registration), "p")
-  pcall(vim.fn.writefile, {
-    vim.json.encode({ address = vim.v.servername, cwd = vim.fn.getcwd(), pid = vim.fn.getpid() }),
-  }, registration)
-end
-local group = vim.api.nvim_create_augroup("agent_mode_server", { clear = true })
-vim.api.nvim_create_autocmd("DirChanged", { group = group, callback = register })
-vim.api.nvim_create_autocmd("VimLeavePre", {
-  group = group,
-  callback = function()
-    pcall(os.remove, registration)
-  end,
-})
-register()
-
 -- Start from the defaults and vim.g.agent_mode; setup() is optional.
 apply(build_config(defaults, settings.from_globals()))
 

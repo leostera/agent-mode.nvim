@@ -1,10 +1,13 @@
 -- agent-mode's entry points: one <Plug> mapping and one :AgentMode command.
--- Nothing is required here until they are used.
+-- The rest is required when they are used; only the small registration that
+-- lets an attached agent find this Neovim runs now.
 
 if vim.g.loaded_agent_mode then
   return
 end
 vim.g.loaded_agent_mode = true
+
+require("agent_mode.server").setup()
 
 -- Map it yourself, e.g.: vim.keymap.set({ "n", "x" }, "<leader>a", "<Plug>(AgentMode)")
 vim.keymap.set({ "n", "x" }, "<Plug>(AgentMode)", function()

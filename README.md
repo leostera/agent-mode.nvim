@@ -192,8 +192,9 @@ agent to listen.
 
 While it listens, requests you make at your cursor go to it instead of a new
 agent. The server finds your Neovim by the folder the agent runs in (each
-Neovim registers itself in its state folder), or by `$NVIM` inside Neovim's
-terminal. Without the listening loop, the agent can still use the tools when
+Neovim registers itself in its state folder when agent-mode loads; with
+lazy.nvim, add `event = "VeryLazy"` so that happens at startup rather than on
+your first request), or by `$NVIM` inside Neovim's terminal. Without the listening loop, the agent can still use the tools when
 you ask it to in its own window: "look at what I have selected in Neovim",
 "rename this with the language server".
 
