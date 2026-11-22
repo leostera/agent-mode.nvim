@@ -1,5 +1,5 @@
 /**
- * agent-mode for pi: registers agent-mode's MCP server, so pi can work in
+ * pi-nvim: registers the nvim-mcp server, so pi can work in
  * the user's Neovim (its buffers, cursor, language servers, inline answers)
  * and take the requests the user makes at their cursor.
  *
@@ -13,10 +13,10 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
-	const bridge = join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "agent-mode-mcp");
-	const server = process.env.AGENT_MODE_SERVER;
+	const bridge = join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "nvim-mcp");
+	const server = process.env.NVIM_MCP_SERVER;
 	try {
-		pi.registerMcpServer("agent-mode", {
+		pi.registerMcpServer("nvim-mcp", {
 			command: bridge,
 			args: server ? ["--server", server] : [],
 			exposure: "direct",

@@ -16,7 +16,7 @@
 --                               -- the conversation to continue; nil runs
 --                               -- without one
 --     mcp = { command, args, server, pi_extension },
---                               -- agent-mode's MCP server for this Neovim
+--                               -- the nvim-mcp server for this Neovim
 --                               -- (command and args start it), and pi's
 --                               -- extension that registers it
 --   }
@@ -25,7 +25,7 @@
 -- picks one) or `read_session_id(result)` (to read it from the finished
 -- process); agent-mode keeps it for the next request.
 --
--- The agent works in Neovim through agent-mode's MCP tools (edit,
+-- The agent works in Neovim through nvim-mcp's tools (edit,
 -- show_answer, run_lua, ...); what it prints on stdout at the end is shown
 -- as the answer when it did not use them. Agents also get their usual tools
 -- (pi adds codemode), so they can look around the project and change other
@@ -51,7 +51,7 @@ end
 M.uuid = uuid
 
 --- pi (https://pi.dev). Takes the system prompt as a file and the request on
---- stdin, and agent-mode's MCP server through pi/agent-mode.ts. The prompt goes through a file because some pi extensions kill the
+--- stdin, and the nvim-mcp server through pi/pi-nvim.ts. The prompt goes through a file because some pi extensions kill the
 --- process when an argument is longer than about 1 KB. --session-id creates
 --- the session the first time and continues it after.
 function M.pi(request)
@@ -78,11 +78,11 @@ function M.pi(request)
   end
   vim.list_extend(argv, request.args)
   vim.list_extend(argv, { "--system-prompt", system_prompt_file(request.system_prompt) })
-  -- The extension registers agent-mode's MCP server for this Neovim.
+  -- The extension registers the nvim-mcp server for this Neovim.
   return {
     argv = argv,
     stdin = request.prompt,
-    env = { AGENT_MODE_SERVER = request.mcp.server },
+    env = { NVIM_MCP_SERVER = request.mcp.server },
     session_id = session_id,
   }
 end
@@ -107,12 +107,12 @@ function M.codex(request)
   vim.list_extend(argv, { "-c", string.format("model_reasoning_effort=%q", request.thinking or "low") })
   vim.list_extend(argv, {
     "-c",
-    string.format("mcp_servers.agent_mode.command=%q", request.mcp.command),
+    string.format("mcp_servers.nvim-mcp.command=%q", request.mcp.command),
     "-c",
-    string.format("mcp_servers.agent_mode.args=%s", vim.json.encode(request.mcp.args)),
-    -- exec cannot ask, so agent-mode's own tools are approved up front.
+    string.format("mcp_servers.nvim-mcp.args=%s", vim.json.encode(request.mcp.args)),
+    -- exec cannot ask, so nvim-mcp's tools are approved up front.
     "-c",
-    'mcp_servers.agent_mode.default_tools_approval_mode="approve"',
+    'mcp_servers.nvim-mcp.default_tools_approval_mode="approve"',
   })
   if request.model then
     vim.list_extend(argv, { "-c", string.format("model=%q", request.model) })
@@ -134,7 +134,7 @@ end
 
 --- Claude Code. Its usual tools with file edits allowed (commands that
 --- need permission are refused, since nobody can answer in --print), and of
---- MCP servers only agent-mode's, its tools allowed; the system prompt goes
+--- MCP servers only nvim-mcp, its tools allowed; the system prompt goes
 --- in a file
 --- and the request on stdin. `thinking` is passed as --effort (low, medium,
 --- high, xhigh, max). A session starts with --session-id and continues with
@@ -143,7 +143,7 @@ function M.claude(request)
   local session = request.session
   local session_id = session and (session.id or uuid())
   local mcp_config = vim.json.encode({
-    mcpServers = { ["agent-mode"] = { command = request.mcp.command, args = request.mcp.args } },
+    mcpServers = { ["nvim-mcp"] = { command = request.mcp.command, args = request.mcp.args } },
   })
   local argv = {
     "claude",
@@ -156,7 +156,7 @@ function M.claude(request)
     mcp_config,
     "--strict-mcp-config",
     "--allowedTools",
-    "mcp__agent-mode",
+    "mcp__nvim-mcp",
   }
   if not session then
     argv[#argv + 1] = "--no-session-persistence"
@@ -177,7 +177,7 @@ function M.claude(request)
 end
 
 --- OpenCode, with its default agent and its permissions auto-approved, since
---- nobody can answer a prompt, and agent-mode's MCP server in its inline
+--- nobody can answer a prompt, and the nvim-mcp server in its inline
 --- config. --standalone runs it on a private server: the shared background
 --- service would not see that config, which comes in the environment. It has no system prompt flag, so the system
 --- prompt leads the request on stdin. `model` is OpenCode's provider/model.
@@ -195,7 +195,7 @@ function M.opencode(request)
   vim.list_extend(argv, request.args)
   local config = vim.json.encode({
     mcp = {
-      ["agent-mode"] = {
+      ["nvim-mcp"] = {
         type = "local",
         command = vim.list_extend({ request.mcp.command }, request.mcp.args),
         enabled = true,

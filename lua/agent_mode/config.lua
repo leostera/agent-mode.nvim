@@ -60,9 +60,8 @@ local M = {}
 M.defaults = {
   -- Which agent answers:
   --   "pi", "claude", "codex", "opencode", or a function(request) returning
-  --     { argv, stdin } (see lua/agent_mode/agents.lua): a fresh agent per
-  --     request, without tools, replies with JSON actions that agent-mode
-  --     applies to the buffer.
+  --     { argv, stdin, env } (see lua/agent_mode/agents.lua): the agent CLI,
+  --     started with the nvim-mcp server, whose tools change the buffer.
   --   "axo": the agent of an Axo Session (see `axo` below) gets the request
   --     and edits the file itself; agent-mode reloads the buffer afterwards.
   agent = "pi",
@@ -119,7 +118,7 @@ M.defaults = {
     -- each request on its own, all at once.
     enabled = true,
     -- What a request does when no agent is attached (an agent you run
-    -- yourself, listening through agent-mode's MCP server; see
+    -- yourself, listening through the nvim-mcp server; see
     -- :AgentMode attach). An attached agent always takes requests.
     --   "start": start the agent for it
     --   "attach": wait for an agent to attach, and say how

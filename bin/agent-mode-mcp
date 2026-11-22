@@ -1,7 +1,0 @@
-#!/bin/sh
-# agent-mode's MCP server (stdio): gives an agent tools to work in Neovim.
-# Add it to your agent once, e.g. `claude mcp add agent-mode -- <this file>`.
-# It finds Neovim by --server <address>, $AGENT_MODE_SERVER, $NVIM, or the
-# Neovim running agent-mode in the folder the agent runs in.
-here=$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)
-exec nvim --clean --headless -l "$here/agent-mode-mcp.lua" "$@"

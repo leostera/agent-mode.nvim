@@ -1,5 +1,5 @@
--- The MCP tools agent-mode gives agents, as MCP tool definitions. Shared by
--- bin/agent-mode-mcp (which lists them even before it finds a Neovim) and
+-- The tools nvim-mcp gives agents, as MCP tool definitions. Shared by
+-- bin/nvim-mcp (which lists them even before it finds a Neovim) and
 -- Neovim (which carries them out, in agent_mode.tools).
 --
 -- Everything an agent does in Neovim is about a context: a snapshot of a

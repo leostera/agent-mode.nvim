@@ -8,7 +8,7 @@ M.system_prompt = [[
 You are working for a user in the Neovim editor through agent-mode. The user
 asked something about the code at their cursor; the request below has the
 instruction, the file, the cursor, and the buffer with line numbers, and a
-context_id. Do it with agent-mode's tools (the agent-mode MCP server):
+context_id. Do it with the tools of the nvim-mcp MCP server:
 
 - edit: change the user's buffer, by the line numbers in the request.
 - lsp_rename: rename the symbol at the cursor across the project, when the

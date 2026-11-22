@@ -76,7 +76,7 @@ local subcommands = {
     end,
   },
   attach = {
-    desc = "how to attach an agent you run yourself (through agent-mode's MCP server)",
+    desc = "how to attach an agent you run yourself (through the nvim-mcp server)",
     run = function()
       require("agent_mode").attach()
     end,

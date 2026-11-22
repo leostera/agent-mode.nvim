@@ -1,7 +1,7 @@
 -- Stands in for an agent in the tests, run with `nvim -l`: records the
 -- prompt it was sent on stdin, then makes the tool calls in
 -- $AGENT_MODE_FAKE_CALLS (JSON: a list of { name, arguments }, or
--- { sleep = seconds }) through agent-mode's MCP server, with "@ID@" in the
+-- { sleep = seconds }) through the nvim-mcp server, with "@ID@" in the
 -- arguments replaced by the request's context_id (from the prompt, or from
 -- the last tool result that had one, as wait_for_request returns). Records each result in
 -- $AGENT_MODE_FAKE_RESULTS, prints $AGENT_MODE_FAKE_TEXT, and exits with

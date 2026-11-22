@@ -1,4 +1,4 @@
--- agent-mode's MCP server, run by bin/agent-mode-mcp with Neovim's Lua.
+-- the nvim-mcp server, run by bin/nvim-mcp with Neovim's Lua.
 -- Speaks MCP (JSON-RPC, one message per line) on stdin/stdout and carries
 -- out tool calls in the user's Neovim over its RPC socket.
 
@@ -20,7 +20,7 @@ end
 
 --- Neovims running agent-mode, from the files each writes in the state folder.
 local function registered()
-  local dir = vim.fs.joinpath(vim.fn.stdpath("state"), "agent-mode", "servers")
+  local dir = vim.fs.joinpath(vim.fn.stdpath("state"), "nvim-mcp", "servers")
   local found = {}
   for name in vim.fs.dir(dir) do
     local ok, info = pcall(function()
@@ -38,7 +38,7 @@ end
 --- above it) comes first, then the one the user used last.
 local function addresses()
   local list = {}
-  for _, a in ipairs({ server_flag, os.getenv("AGENT_MODE_SERVER"), os.getenv("NVIM") }) do
+  for _, a in ipairs({ server_flag, os.getenv("NVIM_MCP_SERVER"), os.getenv("NVIM") }) do
     if a and a ~= "" then
       list[#list + 1] = a
     end
@@ -121,7 +121,7 @@ function handlers.initialize(params)
   return {
     protocolVersion = params and params.protocolVersion or "2025-06-18",
     capabilities = { tools = { listChanged = false } },
-    serverInfo = { name = "agent-mode", version = "0.1.0" },
+    serverInfo = { name = "nvim-mcp", version = "0.1.0" },
     instructions = "Tools to work in the user's Neovim: their buffers, cursor, language servers, and inline answers."
       .. " To take requests the user makes at their cursor, call wait_for_request in a loop.",
   }

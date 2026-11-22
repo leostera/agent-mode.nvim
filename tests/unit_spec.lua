@@ -117,14 +117,14 @@ local request = {
   model = "some-model",
   thinking = "high",
   args = { "--extra" },
-  mcp = { command = "/p/bin/agent-mode-mcp", args = { "--server", "/tmp/nvim.sock" }, server = "/tmp/nvim.sock", pi_extension = "/p/pi/agent-mode.ts" },
+  mcp = { command = "/p/bin/nvim-mcp", args = { "--server", "/tmp/nvim.sock" }, server = "/tmp/nvim.sock", pi_extension = "/p/pi/pi-nvim.ts" },
 }
 
 H.test("the pi agent passes model, thinking, args, and system prompt", function()
   local command = agents.pi(request)
   local argv = table.concat(command.argv, " ")
-  H.contains(argv, "pi --print --tools +codemode --no-context-files --no-skills --extension /p/pi/agent-mode.ts")
-  H.eq({ AGENT_MODE_SERVER = "/tmp/nvim.sock" }, command.env, "the extension finds this Neovim")
+  H.contains(argv, "pi --print --tools +codemode --no-context-files --no-skills --extension /p/pi/pi-nvim.ts")
+  H.eq({ NVIM_MCP_SERVER = "/tmp/nvim.sock" }, command.env, "the extension finds this Neovim")
   H.contains(argv, "--thinking high")
   H.contains(argv, "--model some-model")
   H.contains(argv, "--extra --system-prompt ")
@@ -138,18 +138,18 @@ H.test("the codex agent writes only in the workspace and puts the system prompt 
   H.contains(argv, "codex exec --skip-git-repo-check --sandbox workspace-write --color never --ephemeral")
   H.contains(argv, 'model_reasoning_effort="high"')
   H.contains(argv, 'model="some-model" --extra -')
-  H.contains(argv, '-c mcp_servers.agent_mode.command="/p/bin/agent-mode-mcp" -c mcp_servers.agent_mode.args=["--server","/tmp/nvim.sock"]')
+  H.contains(argv, '-c mcp_servers.nvim-mcp.command="/p/bin/nvim-mcp" -c mcp_servers.nvim-mcp.args=["--server","/tmp/nvim.sock"]')
   H.contains(command.stdin, "SYSTEM")
   H.contains(command.stdin, "PROMPT")
 end)
 
-H.test("the claude agent runs with agent-mode's MCP server only, and no saved session", function()
+H.test("the claude agent runs with the nvim-mcp server only, and no saved session", function()
   local command = agents.claude(request)
   local argv = table.concat(command.argv, " ")
   H.contains(argv, "claude --print --output-format text --permission-mode acceptEdits --mcp-config ")
-  H.contains(argv, "--strict-mcp-config --allowedTools mcp__agent-mode --no-session-persistence")
+  H.contains(argv, "--strict-mcp-config --allowedTools mcp__nvim-mcp --no-session-persistence")
   local config = vim.json.decode(command.argv[8])
-  H.eq({ command = "/p/bin/agent-mode-mcp", args = { "--server", "/tmp/nvim.sock" } }, config.mcpServers["agent-mode"])
+  H.eq({ command = "/p/bin/nvim-mcp", args = { "--server", "/tmp/nvim.sock" } }, config.mcpServers["nvim-mcp"])
   H.contains(argv, "--model some-model --effort high --extra --system-prompt-file ")
   H.eq({ "SYSTEM" }, vim.fn.readfile(command.argv[#command.argv]))
   H.eq("PROMPT", command.stdin)
@@ -159,7 +159,7 @@ H.test("the opencode agent auto-approves, since nobody can answer", function()
   local command = agents.opencode(request)
   H.eq({ "opencode", "run", "--standalone", "--auto", "--model", "some-model", "--extra" }, command.argv)
   local config = vim.json.decode(command.env.OPENCODE_CONFIG_CONTENT)
-  H.eq({ "/p/bin/agent-mode-mcp", "--server", "/tmp/nvim.sock" }, config.mcp["agent-mode"].command)
+  H.eq({ "/p/bin/nvim-mcp", "--server", "/tmp/nvim.sock" }, config.mcp["nvim-mcp"].command)
   H.contains(command.stdin, "SYSTEM")
   H.contains(command.stdin, "PROMPT")
 end)

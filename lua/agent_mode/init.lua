@@ -1,6 +1,6 @@
 -- agent-mode: ask an agent about, or to change, the code at your cursor.
 --
--- Agents work in Neovim through agent-mode's MCP server (bin/agent-mode-mcp),
+-- Agents work in Neovim through the nvim-mcp server (bin/nvim-mcp),
 -- whose tool calls land in M.tool_call: edit the buffer, rename with the
 -- language server, show an answer inline, run Lua. Each tool acts on a
 -- context, a snapshot of a buffer, cursor and selection; a request is a
@@ -38,8 +38,8 @@ M.last = nil
 
 --- The plugin's folder, and the MCP server agents talk to Neovim through.
 local ROOT = vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(vim.fs.normalize(debug.getinfo(1, "S").source:sub(2)))))
-M.mcp_server = vim.fs.joinpath(ROOT, "bin", "agent-mode-mcp")
-M.pi_extension = vim.fs.joinpath(ROOT, "pi", "agent-mode.ts")
+M.mcp_server = vim.fs.joinpath(ROOT, "bin", "nvim-mcp")
+M.pi_extension = vim.fs.joinpath(ROOT, "pi", "pi-nvim.ts")
 
 local requests = {} -- running requests, in the order they were asked
 local contexts = {} -- what tools act on, by id: requests and get_context snapshots
@@ -733,7 +733,7 @@ function tools.finish(args, done)
   done("Finished.")
 end
 
---- Carry out an MCP tool call (from bin/agent-mode-mcp). Returns a ticket
+--- Carry out an MCP tool call (from bin/nvim-mcp). Returns a ticket
 --- for M.tool_result, since tools may wait for the user or for a request.
 --- @param name string
 --- @param args table
@@ -967,20 +967,20 @@ end
 --- and what to tell it. Shown in a scratch window; the instruction is
 --- copied to the clipboard.
 function M.attach()
-  local listen = "Listen to Neovim: call agent-mode's wait_for_request tool, handle each request it returns with"
-    .. " agent-mode's tools, and call wait_for_request again after each one, until I say stop."
+  local listen = "Listen to Neovim: call nvim-mcp's wait_for_request tool, handle each request it returns with"
+    .. " nvim-mcp's tools, and call wait_for_request again after each one, until I say stop."
   local lines = {
     "# Attach an agent to this Neovim",
     "",
     "Neovim: `" .. vim.v.servername .. "`, in `" .. vim.fn.fnamemodify(vim.fn.getcwd(), ":~") .. "`",
     "",
-    "1. Add agent-mode's MCP server to your agent, once:",
+    "1. Add the nvim-mcp server to your agent, once:",
     "",
     "   pi:        pi install " .. M.pi_extension,
-    "   Claude:    claude mcp add --scope user agent-mode -- " .. M.mcp_server,
-    "   Codex:     codex mcp add agent-mode -- " .. M.mcp_server,
+    "   Claude:    claude mcp add --scope user nvim-mcp -- " .. M.mcp_server,
+    "   Codex:     codex mcp add nvim-mcp -- " .. M.mcp_server,
     "   OpenCode:  in ~/.config/opencode/opencode.json, under \"mcp\":",
-    '              "agent-mode": { "type": "local", "command": ["' .. M.mcp_server .. '"] }',
+    '              "nvim-mcp": { "type": "local", "command": ["' .. M.mcp_server .. '"] }',
     "",
     "   Run the agent in any folder: it finds the Neovim in its project, or",
     "   else the one you used last.",

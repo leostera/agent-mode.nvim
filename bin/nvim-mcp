@@ -1,0 +1,7 @@
+#!/bin/sh
+# nvim-mcp, an MCP server (stdio): gives an agent tools to work in Neovim.
+# Add it to your agent once, e.g. `claude mcp add nvim-mcp -- <this file>`.
+# It finds Neovim by --server <address>, $NVIM_MCP_SERVER, $NVIM, or the
+# Neovim in the agent's project, or else the one used last.
+here=$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)
+exec nvim --clean --headless -l "$here/nvim-mcp.lua" "$@"

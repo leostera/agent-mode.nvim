@@ -1,4 +1,4 @@
--- Tells agent-mode's MCP server (bin/agent-mode-mcp) where this Neovim is,
+-- Tells the nvim-mcp server (bin/nvim-mcp) where this Neovim is,
 -- so an agent finds it from any folder: a file per Neovim in the state
 -- folder with its address, working folder, and when the user last used it
 -- (the server prefers a Neovim in the agent's project, then the latest). Loaded at startup
@@ -6,7 +6,7 @@
 
 local M = {}
 
-local path = vim.fs.joinpath(vim.fn.stdpath("state"), "agent-mode", "servers", vim.fn.getpid() .. ".json")
+local path = vim.fs.joinpath(vim.fn.stdpath("state"), "nvim-mcp", "servers", vim.fn.getpid() .. ".json")
 
 --- Write (or update) this Neovim's entry.
 function M.register()

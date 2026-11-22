@@ -1,5 +1,5 @@
 -- End-to-end tests of a request, with a scripted agent standing in for the
--- model (tests/fake_agent.lua, which calls agent-mode's MCP server) and,
+-- model (tests/fake_agent.lua, which calls the nvim-mcp server) and,
 -- when installed, a real Lua language server.
 --   nvim --headless -l tests/integration_spec.lua
 
