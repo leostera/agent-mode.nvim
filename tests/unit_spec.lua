@@ -562,6 +562,12 @@ H.test("agent lua that calls ctx.async() finishes when done() is called, or time
   H.contains(run_code("ctx.async()", nil, 100), "done() was not")
 end)
 
+H.test("callbacks run on the main loop, and their errors come back", function()
+  H.eq("returned:\n/", run_code("local done = ctx.async() vim.system({ 'true' }, {}, function() done(vim.fn.fnamemodify('/', ':p')) end)"))
+  H.contains(run_code("local done = ctx.async() vim.system({ 'true' }, function() error('late') end)"), "error: in a callback: agent-lua:1: late")
+  H.contains(run_code("local done = ctx.async() vim.defer_fn(function() local x = nil; x() end, 10)"), "error: in a callback:")
+end)
+
 H.test("describe() lists what Neovim has, and the shape of any module", function()
   local overview = run_code("return describe()")
   for _, key in ipairs({ "neovim", "topics", "helpers", "language_servers" }) do

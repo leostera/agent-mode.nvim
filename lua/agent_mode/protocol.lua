@@ -115,6 +115,9 @@ M.lua_prompt = [[
    them small). For anything asynchronous, such as vim.lsp.buf_request or
    vim.system, call `local done = ctx.async()` first and then `done(value)`
    when the result is in; never block Neovim with vim.wait or *_sync calls.
+   Callbacks of vim.system, vim.schedule, vim.defer_fn and LSP requests run
+   on the main loop, so vim.fn and vim.api work in them, and an error in
+   one comes back to you; raw vim.uv callbacks do not get this.
    The user's editor must stay usable: no :quit, no writing files unless
    asked, and leave the user's buffers as they were unless the instruction
    says to change them.

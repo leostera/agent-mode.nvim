@@ -19,6 +19,10 @@ vim.api.nvim_create_user_command("AgentModeDismiss", function(args)
   require("agent_mode").dismiss(args.bang)
 end, { bang = true, desc = "agent-mode: clear the inline answer nearest the cursor (! for all)" })
 
+vim.api.nvim_create_user_command("AgentModeConfig", function()
+  require("agent_mode").open_config()
+end, { desc = "agent-mode: change the agent, model, and other settings" })
+
 vim.api.nvim_create_user_command("AgentModeNew", function()
   require("agent_mode").new_session()
 end, { desc = "agent-mode: start a new conversation with the agent" })

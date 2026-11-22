@@ -520,6 +520,40 @@ H.test("requests share one session and run one at a time", function()
   agent_mode.dismiss(true)
 end)
 
+H.test(":AgentModeConfig changes settings from one key each and copies them as Lua", function()
+  agent_mode.setup({ keymap = false, agent = "pi", model = "m1", thinking = "high" })
+  local select = vim.ui.select
+  local picks = { Agent = "claude", Thinking = "max" }
+  vim.ui.select = function(items, opts, on_choice)
+    on_choice(picks[opts.prompt], picks[opts.prompt] and vim.fn.index(items, picks[opts.prompt]) + 1)
+  end
+  local win = agent_mode.open_config()
+  local buf = vim.api.nvim_win_get_buf(win)
+  local function press(keys)
+    vim.api.nvim_feedkeys(vim.keycode(keys), "x", false)
+    vim.wait(50)
+  end
+  H.contains(table.concat(H.lines(buf), "\n"), "a  Agent         pi")
+  press("a")
+  H.eq("claude", agent_mode.config.agent)
+  H.eq(nil, agent_mode.config.model, "a new agent clears the model")
+  H.eq(nil, agent_mode.config.thinking, "and the thinking level")
+  press("t")
+  H.eq("max", agent_mode.config.thinking)
+  press("l")
+  H.eq("allow", agent_mode.config.lua)
+  press("l")
+  H.eq(false, agent_mode.config.lua)
+  press("c")
+  H.eq(false, agent_mode.config.session)
+  H.contains(table.concat(H.lines(buf), "\n"), "Thinking      max")
+  press("y")
+  H.eq('require("agent_mode").setup({\n  agent = "claude",\n  thinking = "max",\n  lua = false,\n  session = false,\n  keymap = false,\n})', vim.fn.getreg('"'))
+  press("q")
+  H.truthy(not vim.api.nvim_win_is_valid(win))
+  vim.ui.select = select
+end)
+
 H.test("lua results go back to the agent until it answers", function()
   local buf = H.buffer({ "local a = 1" }, "lua")
   local prompts = scripted_agent({

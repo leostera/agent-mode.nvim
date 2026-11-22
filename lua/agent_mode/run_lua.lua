@@ -10,7 +10,7 @@ local introspect = require("agent_mode.introspect")
 local M = {}
 
 --- The `am` helpers the agent's code gets, so it writes less boilerplate.
-local function helpers(ctx)
+local function helpers(ctx, guard)
   local am = {}
   am.docs = {
     ["am.scratch(lines, opts)"] = "Show lines (a list or a string) in a new scratch buffer and return its number. "
@@ -45,6 +45,7 @@ local function helpers(ctx)
         callback({})
       end)
     end
+    callback = guard(callback)
     vim.lsp.buf_request_all(ctx.bufnr, method, params or am.position_params(), function(responses)
       local results = {}
       for id, response in pairs(responses) do
@@ -159,10 +160,70 @@ function M.run(code, ctx, timeout_ms, on_done)
       end
     end,
   })
-  local am = helpers(ctx)
+  -- Errors in callbacks happen after the code returned, outside the pcall
+  -- below. Catch them, so the agent hears about them instead of the user
+  -- getting a bare "Lua callback" error.
+  local function guard(fn)
+    return function(...)
+      local ok, err = xpcall(fn, debug.traceback, ...)
+      if ok then
+        return err
+      end
+      if finished then
+        vim.notify("agent-mode: the agent's Lua failed after it finished: " .. tostring(err), vim.log.levels.WARN)
+      else
+        finish({ error = "in a callback: " .. tostring(err) })
+      end
+    end
+  end
+  -- And run callbacks that come in fast event contexts (vim.system's) on the
+  -- main loop, where vim.fn and the API work.
+  local function scheduled(fn)
+    local guarded = guard(fn)
+    return function(...)
+      local args = vim.F.pack_len(...)
+      vim.schedule(function()
+        guarded(vim.F.unpack_len(args))
+      end)
+    end
+  end
+  local safe_vim = setmetatable({
+    system = function(cmd, opts, on_exit)
+      if type(opts) == "function" then
+        opts, on_exit = nil, opts
+      end
+      opts = opts and vim.tbl_extend("force", {}, opts) or nil
+      for _, stream in ipairs({ "stdout", "stderr" }) do
+        if opts and type(opts[stream]) == "function" then
+          opts[stream] = scheduled(opts[stream])
+        end
+      end
+      return vim.system(cmd, opts, on_exit and scheduled(on_exit))
+    end,
+    schedule = function(fn)
+      return vim.schedule(guard(fn))
+    end,
+    schedule_wrap = function(fn)
+      return vim.schedule_wrap(guard(fn))
+    end,
+    defer_fn = function(fn, timeout)
+      return vim.defer_fn(guard(fn), timeout)
+    end,
+    lsp = setmetatable({
+      buf_request = function(bufnr, method, params, handler, ...)
+        return vim.lsp.buf_request(bufnr, method, params, handler and guard(handler), ...)
+      end,
+      buf_request_all = function(bufnr, method, params, handler)
+        return vim.lsp.buf_request_all(bufnr, method, params, guard(handler))
+      end,
+    }, { __index = vim.lsp }),
+  }, { __index = vim })
+
+  local am = helpers(ctx, guard)
   local env = setmetatable({
     ctx = ctx,
     am = am,
+    vim = safe_vim,
     describe = function(topic)
       return introspect.describe(ctx, am, topic)
     end,

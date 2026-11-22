@@ -117,6 +117,9 @@ Commands:
 - `:AgentModeAgent [name]`: show or switch the agent, with completion
 - `:AgentModeCancel`: stop the requests on the cursor line, or all of them
 - `:AgentModeDismiss[!]`: clear the answer nearest the cursor (all with `!`)
+- `:AgentModeConfig`: change the agent, model, thinking, Lua, conversation,
+  and prompt settings from a window, one key each; `y` copies them as Lua for
+  your config
 - `:AgentModeNew`: start a new conversation with the agent
 - `:AgentModeLog`: show the last prompt, command, session, and raw reply
 

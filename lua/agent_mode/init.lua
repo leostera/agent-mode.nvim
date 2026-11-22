@@ -98,6 +98,7 @@ local defaults = {
 }
 
 M.config = vim.deepcopy(defaults)
+M.defaults = defaults
 
 --- The most recent request's log, for :AgentModeLog.
 M.last = nil
@@ -337,7 +338,12 @@ run_lua_action = function(request, action, on_done)
   end
   local function run()
     request.spinner:set_status("running Lua in Neovim")
-    run_lua.run(action.code, lua_context(request), M.config.lua_timeout_ms, function(report)
+    run_lua.run(action.code, lua_context(request), M.config.lua_timeout_ms, function(report, ok)
+      if not ok then
+        -- The agent gets the error and may fix it; say so, so it is not silent.
+        local first = report:match("error: ([^\n]*)") or report
+        notify("the agent's Lua failed, so it was told and may try again: " .. first, vim.log.levels.WARN)
+      end
       record(report)
     end)
   end
@@ -899,6 +905,11 @@ function M.configure(opts)
   if M.config.agent == "axo" and M.config.axo.session == "self" and not vim.env.AXO_SESSION_ID then
     notify("agent is axo with session \"self\", but Neovim is not running in an Axo Session", vim.log.levels.WARN)
   end
+end
+
+--- Open the settings window.
+function M.open_config()
+  return require("agent_mode.config_ui").open()
 end
 
 --- The agents :AgentModeAgent can switch to.
