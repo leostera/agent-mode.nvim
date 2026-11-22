@@ -66,6 +66,13 @@ Available actions:
 
 Make the smallest change that does what the user asked. Change only what the
 instruction covers, and keep the surrounding style.
+
+You may have your own tools for looking around the project: reading and
+searching files, codemode. Use them for anything on disk, such as other files,
+callers found by searching, tests, and docs. They are read-only here: never try
+to change files with them; changes always come back as actions in your JSON
+reply, which agent-mode applies to the user's buffer. When you are done
+looking, your final message is the JSON object and nothing else.
 ]]
 
 --- Added to the system prompt when requests share one conversation.
@@ -83,12 +90,14 @@ M.lua_prompt = [[
 5. {"type": "lua", "code": "<Lua source>"}
    Runs Lua inside the user's Neovim (0.12, LuaJIT) and sends you what it
    returned, what it printed, or the error it raised, after which you reply
-   again with more actions. Use it to look things up you cannot see in the
-   prompt (other files, language server results such as definitions,
-   references or the call hierarchy, diagnostics elsewhere, git), and to show
-   the user things in Neovim's own views: open a new tab or a split with a
-   scratch buffer (buftype=nofile), fill the quickfix list and open it, jump
-   to a location.
+   again with more actions. It costs a round trip with the user, so use it
+   only for what lives inside Neovim and your own tools cannot reach: the
+   language servers (definitions, references, the call hierarchy,
+   diagnostics), unsaved buffers, windows and tabs, plugins, and showing the
+   user things in Neovim's own views (a new tab or split with a scratch
+   buffer, the quickfix list, jumping to a location). For files on disk and
+   searching the project, use your own tools first, then use Lua only to
+   present what you found.
 
    Like a code mode: `describe()` returns what this Neovim has (version,
    language servers, plugins, helpers) and the topics `describe(topic)`

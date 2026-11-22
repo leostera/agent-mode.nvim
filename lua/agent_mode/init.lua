@@ -281,6 +281,9 @@ local function progress_status(stream)
   if summary and summary ~= "" then
     return summary
   end
+  if stream.tool ~= "" then
+    return "looking around: " .. stream.tool
+  end
   if stream.text ~= "" then
     return "writing reply…"
   end
@@ -550,7 +553,7 @@ start_agent = function(request)
     return finish(request, "unknown agent output format " .. vim.inspect(command.output))
   end
   local decoder = make_decoder()
-  local stream = { text = "", thinking = "" }
+  local stream = { text = "", thinking = "", tool = "" }
   request.spinner:set_status("waiting for the agent…")
 
   local ok, process = pcall(vim.system, command.argv, {
@@ -562,7 +565,11 @@ start_agent = function(request)
       end
       vim.schedule(function()
         for _, event in ipairs(decoder.feed(chunk)) do
-          stream[event.kind] = stream[event.kind] .. event.delta
+          if event.kind == "tool" then
+            stream.tool = event.delta
+          else
+            stream[event.kind] = stream[event.kind] .. event.delta
+          end
         end
         if not request.finished then
           request.spinner:set_status(progress_status(stream))

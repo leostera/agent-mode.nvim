@@ -74,18 +74,19 @@ Then put the cursor somewhere, press `<leader>a`, and type.
 
 ## Pick your agent
 
-agent-mode runs your agent's CLI once per request, with no tools: the agent
-only answers, and agent-mode applies the answer. Each run continues the same
+agent-mode runs your agent's CLI once per request with read-only tools: the
+agent can read and search your project (pi also gets codemode), but it never
+writes files. It answers, and agent-mode applies the answer to your buffer. Each run continues the same
 session, so the agent remembers earlier requests (see
 [One conversation per Neovim](#one-conversation-per-neovim)). Your agent's own
 login, model access, and billing are used as they are.
 
 | Agent | `agent =` | How it runs | `thinking` |
 | --- | --- | --- | --- |
-| [Claude Code](https://docs.anthropic.com/claude-code) | `"claude"` | `claude --print --tools ""`, `--session-id`/`--resume`, no MCP servers | `--effort`: `low` … `max` |
+| [Claude Code](https://docs.anthropic.com/claude-code) | `"claude"` | `claude --print --tools Read,Grep,Glob`, `--session-id`/`--resume`, no MCP servers | `--effort`: `low` … `max` |
 | [Codex](https://github.com/openai/codex) | `"codex"` | `codex exec --sandbox read-only`, then `codex exec resume <id>` | `model_reasoning_effort`: `minimal` … `high` (default `low`) |
 | [OpenCode](https://opencode.ai) | `"opencode"` | `opencode run --agent plan --session <id>` (read-only) | n/a |
-| [pi](https://pi.dev) | `"pi"` | `pi --print --no-tools --session-id <id>` | `off` … `xhigh` (default `off`) |
+| [pi](https://pi.dev) | `"pi"` | `pi --print --tools read,grep,find,ls,codemode --session-id <id>` | `off` … `xhigh` (default `off`) |
 | anything else | a function | see [Custom agents](#custom-agents) | |
 
 Choose a model with `model`, in the format your agent expects:
@@ -150,9 +151,19 @@ once, as before.
 
 Some requests need more than the file you are in: "show me the call graph
 starting here", "where else is this used?", "open the tests for this in a
-split". For those, the agent can send Lua that agent-mode runs in your Neovim.
-What the code returns or prints goes back to the agent, which takes another
-step or answers. A request can take up to `max_turns` steps.
+split". The agent splits the work:
+
+- **Its own tools** for anything on disk: it reads and searches your project
+  (with codemode in pi) the way it always does.
+- **Lua in your Neovim** for what only Neovim has: your language servers,
+  unsaved buffers, windows and plugins, and showing you the result in a tab,
+  a split, or the quickfix list.
+
+What the Lua returns or prints goes back to the agent, which takes another
+step or answers. A request can take up to `max_turns` steps. Asked for the
+call graph of a function, pi searched the project for the callers five
+levels up with its tools, then sent one piece of Lua to open the graph in a
+new tab.
 
 The agent's code works like a code mode:
 

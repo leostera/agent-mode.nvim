@@ -148,7 +148,7 @@ local request = {
 H.test("the pi agent passes model, thinking, args, and system prompt", function()
   local command = agents.pi(request)
   local argv = table.concat(command.argv, " ")
-  H.contains(argv, "pi --print --mode json --no-tools")
+  H.contains(argv, "pi --print --mode json --tools read,grep,find,ls,codemode")
   H.eq("pi-json", command.output)
   H.contains(argv, "--thinking high")
   H.contains(argv, "--model some-model")
@@ -170,7 +170,7 @@ end)
 H.test("the claude agent runs without tools or a saved session", function()
   local command = agents.claude(request)
   local argv = table.concat(command.argv, " ")
-  H.contains(argv, "claude --print --output-format text --tools  --strict-mcp-config --no-session-persistence")
+  H.contains(argv, "claude --print --output-format text --tools Read,Grep,Glob --strict-mcp-config --no-session-persistence")
   H.contains(argv, "--model some-model --effort high --extra --system-prompt-file ")
   H.eq({ "SYSTEM" }, vim.fn.readfile(command.argv[#command.argv]))
   H.eq("PROMPT", command.stdin)
@@ -528,6 +528,18 @@ H.test("the protocol accepts lua actions with code", function()
   H.eq({ { type = "lua", code = "return 1" } }, response.actions)
   local _, err = protocol.parse('{"actions":[{"type":"lua","code":""}]}')
   H.contains(err, "lua action 1 has no code")
+end)
+
+H.test("pi's tool calls show up as what the agent is looking at", function()
+  local decoder = agents.decoders["pi-json"]()
+  local events = decoder.feed(vim.json.encode({
+    type = "tool_execution_start",
+    toolName = "grep",
+    args = { pattern = "function M.plan" },
+  }) .. "\n")
+  H.eq({ { kind = "tool", delta = "grep function M.plan" } }, events)
+  H.eq("read " .. string.rep("x", 39) .. "…", agents.describe_tool("read", { path = string.rep("x", 50) }))
+  H.eq("codemode", agents.describe_tool("codemode", {}))
 end)
 
 H.test("a summary without actions is the answer", function()

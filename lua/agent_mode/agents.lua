@@ -23,14 +23,21 @@
 --
 -- With output = "text" (the default) the command must print the agent's final
 -- reply, and nothing else, on stdout. With "pi-json" it prints pi's JSON event
--- stream, which lets agent-mode show the agent's thinking as it happens.
--- No agent gets tools: it only answers, and agent-mode applies the answer.
+-- stream, which lets agent-mode show the agent's thinking and tools as they
+-- happen.
+--
+-- Agents get their own read-only tools (reading and searching files, pi's
+-- codemode) to look around the project, but nothing that writes: changes
+-- come back as actions that agent-mode applies, and what needs Neovim
+-- itself goes through the "lua" action.
 
 local M = {}
 
 --- Output decoders turn an agent's stdout, chunk by chunk, into progress
 --- events and, at the end, the reply text.
----   decoder.feed(chunk) -> { { kind = "thinking"|"text", delta = string }, ... }
+---   decoder.feed(chunk) -> { { kind = "thinking"|"text"|"tool", delta = string }, ... }
+---     ("tool" events name the tool the agent just started, and replace
+---     the one before)
 ---   decoder.reply()     -> string
 M.decoders = {}
 
@@ -55,6 +62,20 @@ local function message_text(message)
     end
   end
   return table.concat(parts)
+end
+
+--- A few words on what a tool call is doing, for the status by the line.
+function M.describe_tool(name, args)
+  args = type(args) == "table" and args or {}
+  local detail = args.path or args.pattern or args.command or args.query
+  if type(detail) ~= "string" or detail == "" then
+    return name
+  end
+  detail = detail:gsub("%s+", " ")
+  if vim.fn.strchars(detail) > 40 then
+    detail = vim.fn.strcharpart(detail, 0, 39) .. "…"
+  end
+  return name .. " " .. detail
 end
 
 --- pi --mode json: one JSON event per line.
@@ -86,6 +107,8 @@ M.decoders["pi-json"] = function()
               streamed[#streamed + 1] = update.delta
               events[#events + 1] = { kind = "text", delta = update.delta }
             end
+          elseif event.type == "tool_execution_start" and type(event.toolName) == "string" then
+            events[#events + 1] = { kind = "tool", delta = M.describe_tool(event.toolName, event.args) }
           elseif event.type == "message_end" and type(event.message) == "table" and event.message.role == "assistant" then
             final = message_text(event.message)
           end
@@ -117,6 +140,10 @@ local function uuid()
 end
 M.uuid = uuid
 
+--- pi's tools for looking around: reading and searching, and codemode to
+--- script them. No bash, edit or write.
+M.pi_tools = "read,grep,find,ls,codemode"
+
 --- pi (https://pi.dev). Takes the system prompt as a file and the request on
 --- stdin. The prompt goes through a file because some pi extensions kill the
 --- process when an argument is longer than about 1 KB. --session-id creates
@@ -128,7 +155,8 @@ function M.pi(request)
     "--print",
     "--mode",
     "json",
-    "--no-tools",
+    "--tools",
+    M.pi_tools,
     "--no-context-files",
     "--no-skills",
     "--no-mcp",
@@ -183,14 +211,17 @@ function M.codex(request)
   }
 end
 
---- Claude Code. No tools, no MCP servers; the system prompt goes in a file
+--- Claude Code's tools for looking around: reading and searching files.
+M.claude_tools = "Read,Grep,Glob"
+
+--- Claude Code. Read-only tools, no MCP servers; the system prompt goes in a file
 --- and the request on stdin. `thinking` is passed as --effort (low, medium,
 --- high, xhigh, max). A session starts with --session-id and continues with
 --- --resume, since --session-id refuses an id that exists.
 function M.claude(request)
   local session = request.session
   local session_id = session and (session.id or uuid())
-  local argv = { "claude", "--print", "--output-format", "text", "--tools", "", "--strict-mcp-config" }
+  local argv = { "claude", "--print", "--output-format", "text", "--tools", M.claude_tools, "--strict-mcp-config" }
   if not session then
     argv[#argv + 1] = "--no-session-persistence"
   elseif session.started then

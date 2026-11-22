@@ -78,7 +78,7 @@ ${POINTS.map((p) => `    <li><h2>${p.title}</h2><p>${p.text}</p></li>`).join('\n
     <h2 id="install">Install</h2>
     <p>With <a href="https://github.com/folke/lazy.nvim">lazy.nvim</a>, with an agent CLI installed and logged in:</p>
     <pre><code>${esc(SPEC)}</code></pre>
-    <p>Your agent’s own login, models and billing are used as they are. It runs once per request with no tools; agent-mode applies what it answers.</p>
+    <p>Your agent’s own login, models and billing are used as they are. It can read and search your project but never writes files; agent-mode applies what it answers.</p>
   </section>
   <section class="compare" aria-labelledby="compare">
     <h2 id="compare">Why not a chat plugin?</h2>
