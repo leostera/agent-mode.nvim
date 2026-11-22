@@ -5,7 +5,7 @@ change, without leaving Neovim. Answers show up right below the line you asked
 about, and changes land in the buffer as one undo step.
 
 Works with the agent you already use: **Claude Code**, **Codex**, **OpenCode**,
-or **pi**.
+or **pi**. [agent-mode.leostera.dev](https://agent-mode.leostera.dev)
 
 ![Two questions answered inline below their lines, then a block extracted into a function](docs/demo.gif)
 
