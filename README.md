@@ -7,7 +7,9 @@ about, and changes land in the buffer as one undo step.
 Works with the agent you already use: **Claude Code**, **Codex**, **OpenCode**,
 or **pi**.
 
-![Asking why the edits are sorted bottom-up; the answer appears inline below the line](docs/screenshots/answer.png)
+![Two questions answered inline below their lines, then a block extracted into a function](docs/demo.gif)
+
+<sub>Sped up: the waits for the agent are cut.</sub>
 
 ## Why
 
@@ -29,9 +31,24 @@ where you are, and copying the result back. agent-mode skips all of that:
   the file. Each shows a live status next to its line, and each answer or edit
   lands next to the line it was about, even as lines move.
 
-| Ask | Watch it work | Change |
-| --- | --- | --- |
-| ![The prompt opens right below the cursor](docs/screenshots/ask.png) | ![The line shows what the agent is doing](docs/screenshots/working.png) | ![floor renamed to claimed_from](docs/screenshots/renamed.png) |
+## How it compares
+
+Other plugins bring agents into Neovim too. They are built around a chat, a
+sidebar, or the agent's own terminal; agent-mode is built around the line you
+are on.
+
+| | Where you talk to it | Where answers go | How edits land | Models | Language server |
+| --- | --- | --- | --- | --- | --- |
+| **agent-mode.nvim** | A box under the cursor | Under the line you asked about | Straight into the buffer, one undo step; several requests at once | The agent CLI you use (Claude Code, Codex, OpenCode, pi) | The agent can pick a rename or code action |
+| [codecompanion.nvim](https://github.com/olimorris/codecompanion.nvim) | Chat buffer, inline prompt | Chat buffer | Diff to accept or reject | Model APIs, and CLI agents over ACP | Diagnostics as context |
+| [avante.nvim](https://github.com/avante-corp/avante.nvim) | Sidebar | Sidebar | Suggested diff to apply | Model APIs, and CLI agents over ACP | Not documented |
+| [sidekick.nvim](https://github.com/folke/sidekick.nvim) | The agent's terminal in a split | The agent's terminal | The agent edits files | Any agent CLI, plus Copilot next-edit suggestions | Copilot's suggestions |
+| [opencode.nvim](https://github.com/nickjvandyke/opencode.nvim) | Prompt sent to OpenCode | OpenCode's interface | OpenCode edits; accept, reject, reload | OpenCode | No |
+| [claudecode.nvim](https://github.com/coder/claudecode.nvim) | Claude Code's terminal | Claude Code's terminal | Diff to accept or reject | Claude Code | No |
+| [gp.nvim](https://github.com/Robitx/gp.nvim) | Command or chat buffer | Chat buffer, popup, or the buffer | Rewrite, append, or prepend text | Model APIs | No |
+
+Pick a chat plugin when you want a long conversation about a codebase. Pick
+agent-mode when you want a quick answer or change at the line you are on.
 
 ## Install
 
