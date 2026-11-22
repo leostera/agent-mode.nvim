@@ -89,7 +89,7 @@ function M.snippet()
   local config = agent_mode().config
   local defaults = agent_mode().defaults
   local lines = { 'require("agent_mode").setup({' }
-  for _, key in ipairs({ "agent", "model", "thinking", "lua", "session", "input" }) do
+  for _, key in ipairs({ "agent", "model", "thinking", "lua", "session", "input", "transcript" }) do
     local value = config[key]
     if type(value) ~= "function" and not vim.deep_equal(value, defaults[key]) then
       lines[#lines + 1] = string.format("  %s = %s,", key, vim.inspect(value))
@@ -218,6 +218,27 @@ local function entries()
     change = function(done)
       set({ input = config.input == "cmdline" and "cursor" or "cmdline" })
       done()
+    end,
+  }
+  list[#list + 1] = {
+    label = "Transcript",
+    value = config.transcript.enabled and ("on, " .. config.transcript.position) or "off (answers inline)",
+    change = function(done)
+      local choices = { { "off (answers inline)", false }, { "on, right", "right" }, { "on, left", "left" } }
+      select(choices, {
+        prompt = "Transcript split",
+        format_item = function(item)
+          return item[1]
+        end,
+      }, function(choice)
+        if choice then
+          local t = vim.deepcopy(config.transcript)
+          t.enabled = choice[2] ~= false
+          t.position = choice[2] or t.position
+          set({ transcript = t })
+        end
+        done()
+      end)
     end,
   }
   local session = agent_mode().session()

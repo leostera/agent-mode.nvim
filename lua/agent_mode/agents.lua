@@ -69,6 +69,15 @@ end
 function M.describe_tool(name, args)
   args = type(args) == "table" and args or {}
   local detail = args.path or args.pattern or args.command or args.query
+  if not detail and type(args.code) == "string" then
+    -- codemode: its first line of code that says something
+    for line in args.code:gmatch("[^\n]+") do
+      if not line:match("^%s*//") and not line:match("^%s*$") then
+        detail = vim.trim(line)
+        break
+      end
+    end
+  end
   if type(detail) ~= "string" or detail == "" then
     return name
   end

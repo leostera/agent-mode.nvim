@@ -588,6 +588,56 @@ H.test("files the agent changed on disk are reloaded, unless they have unsaved c
   vim.cmd("bwipeout! " .. other_buf .. " " .. dirty_buf)
 end)
 
+H.test("with the transcript on, it logs the request, tool calls, Lua and the answer, and nothing shows inline", function()
+  local buf = H.buffer({ "local a = 1", "local b = 2" }, "lua")
+  local code_win = vim.api.nvim_get_current_win()
+  local function pi_events(text, tool)
+    local events = {}
+    if tool then
+      events[#events + 1] = vim.json.encode({ type = "tool_execution_start", toolName = "grep", args = { pattern = tool } })
+    end
+    events[#events + 1] = vim.json.encode({
+      type = "message_end",
+      message = { role = "assistant", content = { { type = "text", text = text } } },
+    })
+    return table.concat(events, "\n") .. "\n"
+  end
+  local replies = {
+    pi_events('{"summary":"Looking up a","actions":[{"type":"lua","code":"return 40 + 2"}]}', "local a"),
+    pi_events('{"actions":[{"type":"message","text":"`a` is **1**."}]}'),
+  }
+  local turn = 0
+  agent_mode.setup({
+    keymap = false,
+    lua = "allow",
+    session = false,
+    transcript = { enabled = true, position = "right", width = 50 },
+    agent = function()
+      turn = turn + 1
+      return { argv = { H.root .. "/tests/fake_agent.sh", replies[turn], "0" }, stdin = "", output = "pi-json" }
+    end,
+  })
+  vim.wait(100)
+  H.eq(nil, H.run_agent("what is a?", { bufnr = buf, position = { row = 1, col = 6 } }))
+  local transcript = require("agent_mode.transcript")
+  local text = table.concat(transcript.lines(), "\n")
+  H.contains(text, "> what is a?")
+  H.contains(text, "- grep local a")
+  H.contains(text, "*Looking up a*")
+  H.contains(text, "```lua\nreturn 40 + 2\n```")
+  H.contains(text, "returned:\n42")
+  H.contains(text, "**agent**\n\n`a` is **1**.")
+  H.truthy(text:find("#%d+ done in"), "the request's end is logged")
+  local win = transcript.win()
+  H.truthy(win, "the transcript is open in a split")
+  H.eq(50, vim.api.nvim_win_get_width(win))
+  H.eq(code_win, vim.api.nvim_get_current_win(), "the cursor stays in the code")
+  H.eq(0, #vim.api.nvim_buf_get_extmarks(buf, -1, 0, -1, { details = true, type = "virt_lines" }), "no inline answer")
+  agent_mode.toggle_transcript()
+  H.eq(nil, transcript.win(), ":AgentMode transcript hides it")
+  agent_mode.configure({ transcript = { enabled = false } })
+end)
+
 H.test("lua results go back to the agent until it answers", function()
   local buf = H.buffer({ "local a = 1" }, "lua")
   local prompts = scripted_agent({

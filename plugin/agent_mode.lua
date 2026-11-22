@@ -72,6 +72,12 @@ local subcommands = {
       require("agent_mode").new_session()
     end,
   },
+  transcript = {
+    desc = "show or hide the transcript split (turns it on)",
+    run = function()
+      require("agent_mode").toggle_transcript()
+    end,
+  },
   log = {
     desc = "show the last prompt, command, session, and reply",
     run = function()
@@ -96,7 +102,7 @@ vim.api.nvim_create_user_command("AgentMode", function(opts)
 end, {
   nargs = "*",
   bang = true,
-  desc = "agent-mode: ask the agent, or :AgentMode {ask|cancel|dismiss|agent|config|new|log}",
+  desc = "agent-mode: ask the agent, or :AgentMode {ask|cancel|dismiss|agent|config|new|transcript|log}",
   complete = function(lead, line)
     local words = vim.split(line:gsub("^%S+%s*", ""), "%s+")
     if #words <= 1 then

@@ -12,6 +12,7 @@ CONTENTS                                                 *agent-mode-contents*
   7. Lua in Neovim .............................. |agent-mode-lua|
   8. Lua API .................................... |agent-mode-api|
   9. Highlights ................................. |agent-mode-highlights|
+ 10. Transcript ................................. |agent-mode-transcript|
 
 ==============================================================================
 1. INTRODUCTION                                             *agent-mode-intro*
@@ -91,6 +92,9 @@ Change them with `answer_keymaps`.
 
 :AgentMode new          Start a new conversation with the agent.
 
+:AgentMode transcript   Show or hide the transcript split; the first time,
+                        turn it on. |agent-mode-transcript|
+
 :AgentMode log          Show the last request's prompt, command, session
                         and reply.
 
@@ -121,6 +125,7 @@ reported by |:checkhealth|. Defaults:
       lua_timeout_ms = 10000,  -- for Lua that waits (ctx.async)
       max_turns = 8,           -- replies per request
       session = true,          -- one conversation per Neovim
+      transcript = { enabled = false, position = "right", width = 64 },
       axo = { session = "self", cmd = "axo", timeout_ms = 600000 },
     }
 <
@@ -194,5 +199,15 @@ require("agent_mode").new_session()                 *agent_mode.new_session()*
 AgentModeAnswer, AgentModeAnswerBorder, AgentModeAnswerTitle    answers
 AgentModeInput, AgentModeInputBorder, AgentModeInputTitle       the prompt
 AgentModeLuaBorder, AgentModeLuaTitle                     the Lua confirmation
+
+==============================================================================
+10. TRANSCRIPT                                         *agent-mode-transcript*
+
+With `transcript.enabled`, a split on the `transcript.position` side logs
+every request: what you asked and where, the agent's tool calls, its Lua and
+what came back, edits, reloaded files, and its answers, in Markdown. You
+still ask inline and the line shows the agent's status, but answers go to the
+transcript. The split follows new entries unless you scroll up. It is the
+buffer `agent-mode://transcript`, with 'filetype' markdown.
 
  vim:tw=78:ts=8:noet:ft=help:norl:

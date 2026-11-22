@@ -142,6 +142,7 @@ One command, `:AgentMode`, with completion for its subcommands:
   is fuzzy-searchable (pi's models, for one); without snacks it falls back to
   `vim.ui.select`
 - `:AgentMode new`: start a new conversation with the agent
+- `:AgentMode transcript`: show or hide the transcript split
 - `:AgentMode log`: show the last prompt, command, session, and raw reply
 
 ## One conversation per Neovim
@@ -161,6 +162,23 @@ session run one at a time: a request asked while another is running shows
 "queued" by its line and starts when the first finishes. For requests that
 don't need each other, `session = false` runs each one on its own and all at
 once, as before.
+
+## A transcript, for when a lot is going on
+
+Turn on the transcript and a split on the right (or left) logs every request
+as it happens: what you asked and where, each tool call the agent makes, its
+Lua and what came back, the edits it applied, the files it reloaded, and its
+answer, in Markdown. You still ask inline, right below the cursor, and the line
+still shows what the agent is doing, but answers go to the transcript instead
+of under the line.
+
+```lua
+vim.g.agent_mode = { transcript = { enabled = true, position = "right", width = 64 } }
+```
+
+`:AgentMode transcript` shows or hides it (and turns it on the first time),
+and `:AgentMode config` switches it on, off, or to the other side. Tool calls
+show up live with pi; with the other agents, each step shows when it is done.
 
 ## Let the agent look around and show you things
 
@@ -231,6 +249,7 @@ vim.g.agent_mode = {
   lua_timeout_ms = 10000,  -- how long its asynchronous Lua may take
   max_turns = 8,           -- replies per request; each round of Lua is one
   session = true,          -- one conversation for every request from this Neovim
+  transcript = { enabled = false, position = "right", width = 64 }, -- answers in a side split
 }
 ```
 
