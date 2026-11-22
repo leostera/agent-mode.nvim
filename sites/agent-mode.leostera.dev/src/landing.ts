@@ -18,8 +18,8 @@ const POINTS: { title: string; text: string }[] = [
     text: '“rename to presenter”, “extract this into a function”. Renames go through your language server; edits land as one undo step.',
   },
   {
-    title: 'Keep going',
-    text: 'Fire off as many requests as you like. Each shows a live status by its line, and lands there even as lines move.',
+    title: 'Keep the thread',
+    text: 'Every request goes to the same conversation, so “do the same for the second caller” just works. Each shows a live status by its line, and lands there even as lines move.',
   },
 ];
 
