@@ -213,8 +213,10 @@ With `session.split.enabled`, a split on the `session.split.position` side
 logs every request: what you asked and where, each tool call with its full
 command and duration, its Lua and what came back, edits, reloaded files, and
 its answers, in Markdown. Tool output is folded under each call: <CR> or <Tab> opens or
-closes it, q hides the split. You still ask inline and the line shows the
-agent's status, but answers go to the session. The split follows new entries
+closes it, q hides the split. The input box at the bottom sends a message
+with <CR> (<C-j> starts a new line), about the cursor in the code window you
+were in last. You can still ask inline and the line shows the agent's status,
+but answers go to the session. The split follows new entries
 unless you scroll up.
 
 The split is pinned: it shows in every tab while it is open, and a tab left

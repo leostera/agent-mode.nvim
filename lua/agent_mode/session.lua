@@ -21,6 +21,8 @@ local hl = {
   AgentModeSessionRunning = { link = "DiagnosticInfo" },
   AgentModeSessionDim = { link = "Comment" },
   AgentModeSessionFold = { link = "Comment" },
+  AgentModeSessionInput = { link = "NormalFloat" },
+  AgentModeSessionInputTitle = { link = "Title" },
   AgentModeSessionAgent = { link = "Title" },
   AgentModeSessionSummary = { link = "Comment" },
 }
@@ -39,6 +41,10 @@ local state = {
   opts = { position = "right", width = 64 },
   last_request = nil,
   tools = {}, -- tool blocks by call id
+  input_buf = nil,
+  code_win = nil, -- the code window a message from the sidebar asks about
+  label = "ask the agent", -- the input's title
+  on_submit = nil, -- fun(text: string, win: integer)
   frame = 1,
   timer = nil,
 }
@@ -78,70 +84,189 @@ function M.buf()
   return buf
 end
 
-local function window_in(tab)
-  if not (state.buf and vim.api.nvim_buf_is_valid(state.buf)) then
+--- The input at the bottom of the sidebar: a buffer you type into, kept
+--- across requests, so nothing typed there is lost.
+--- @return integer
+function M.input_buf()
+  if state.input_buf and vim.api.nvim_buf_is_valid(state.input_buf) then
+    return state.input_buf
+  end
+  local buf = vim.api.nvim_create_buf(false, true)
+  assert(buf ~= 0, "agent-mode: could not create the session input")
+  state.input_buf = buf
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].bufhidden = "hide"
+  vim.bo[buf].swapfile = false
+  pcall(vim.api.nvim_buf_set_name, buf, NAME .. "/input")
+  local function map(modes, key, fn, desc)
+    vim.keymap.set(modes, key, fn, { buffer = buf, nowait = true, desc = "agent-mode session: " .. desc })
+  end
+  map({ "n", "i" }, "<CR>", M.submit, "send the message")
+  map("i", "<C-j>", "<CR>", "a new line in the message")
+  map("i", "<S-CR>", "<CR>", "a new line in the message")
+  map("n", "q", M.hide, "hide the session")
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "BufEnter" }, {
+    buffer = buf,
+    callback = M.placeholder,
+  })
+  vim.bo[buf].filetype = "agentmodeinput"
+  M.placeholder()
+  return buf
+end
+
+--- The empty split at the bottom of the sidebar that keeps room for the
+--- input, which floats over it with a border like the inline prompt's.
+--- @return integer
+local function host_buf()
+  if state.host_buf and vim.api.nvim_buf_is_valid(state.host_buf) then
+    return state.host_buf
+  end
+  local buf = vim.api.nvim_create_buf(false, true)
+  assert(buf ~= 0, "agent-mode: could not create the session input")
+  state.host_buf = buf
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].bufhidden = "hide"
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].filetype = "agentmodeinputhost"
+  return buf
+end
+
+local function is_sidebar(win)
+  local buf = vim.api.nvim_win_get_buf(win)
+  return buf == state.buf or buf == state.input_buf or buf == state.host_buf
+end
+
+local function window_in(tab, buf)
+  if not (buf and vim.api.nvim_buf_is_valid(buf)) then
     return nil
   end
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
-    if vim.api.nvim_win_get_buf(win) == state.buf then
+    if vim.api.nvim_win_get_buf(win) == buf then
       return win
     end
   end
   return nil
 end
 
---- The window showing the session in the current tab, if any.
+--- The window showing the session's log in the current tab, if any.
 function M.win()
-  return window_in(0)
+  return window_in(0, state.buf)
 end
 
-local function style(win)
+--- The window with the session's input in the current tab, if any.
+function M.input_win()
+  return window_in(0, state.input_buf)
+end
+
+local function host_win()
+  return window_in(0, state.host_buf)
+end
+
+local function sidebar_style(win)
   local wo = vim.wo[win]
   wo.winfixwidth = true
   -- Like a file tree's sidebar: :e, :bnext or a picker open files in
   -- another window, never in this one.
-  if vim.fn.has("nvim-0.10") == 1 then
-    wo.winfixbuf = true
-  end
+  wo.winfixbuf = true
   wo.wrap = true
   wo.linebreak = true
-  wo.breakindent = true
-  wo.breakindentopt = "shift:4"
   wo.number = false
   wo.relativenumber = false
   wo.signcolumn = "no"
   wo.cursorline = false
   wo.list = false
+  wo.fillchars = "fold: ,eob: "
+end
+
+local function style(win)
+  sidebar_style(win)
+  local wo = vim.wo[win]
+  wo.breakindent = true
+  wo.breakindentopt = "shift:4"
   wo.foldmethod = "expr"
   wo.foldexpr = "v:lua.require'agent_mode.session'.foldexpr(v:lnum)"
   wo.foldtext = "v:lua.require'agent_mode.session'.foldtext()"
   wo.foldlevel = 0
   wo.foldenable = true
-  wo.fillchars = "fold: ,eob: "
   wo.winhighlight = "Folded:AgentModeSessionFold"
+end
+
+local INPUT_LINES = 3
+
+--- Where the input floats: over its host split and its status line, inside
+--- a rounded border.
+local function input_config(host)
+  local width = vim.api.nvim_win_get_width(host)
+  return {
+    relative = "win",
+    win = host,
+    row = 0,
+    col = 0,
+    width = math.max(width - 2, 10),
+    height = INPUT_LINES,
+    border = "rounded",
+    title = { { " " .. state.label .. " ", "AgentModeInputTitle" } },
+    title_pos = "left",
+    footer = { { " <CR> send · <C-j> new line ", "AgentModeSessionDim" } },
+    footer_pos = "right",
+    zindex = 40,
+  }
+end
+
+local function input_style(win)
+  local wo = vim.wo[win]
+  wo.winfixbuf = true
+  wo.wrap = true
+  wo.linebreak = true
+  wo.number = false
+  wo.relativenumber = false
+  wo.signcolumn = "no"
+  wo.cursorline = false
+  wo.fillchars = "eob: "
+  wo.winhighlight = "NormalFloat:AgentModeInput,FloatBorder:AgentModeInputBorder,FloatTitle:AgentModeInputTitle"
 end
 
 function M.scroll_to_end(win)
   pcall(vim.api.nvim_win_set_cursor, win, { vim.api.nvim_buf_line_count(M.buf()), 0 })
 end
 
---- Show the session in the current tab, keeping the cursor where it is.
+--- Put the input back over its host, sized to it.
+local function place_input()
+  local host, input = host_win(), M.input_win()
+  if host and input then
+    vim.api.nvim_win_set_config(input, input_config(host))
+  end
+end
+
+--- Show the session's log and input in the current tab, without moving
+--- the cursor: nothing switches windows, so a prompt open elsewhere stays.
 local function open_here()
-  local existing = M.win()
-  if existing then
-    return existing
+  local log, host, input = M.win(), host_win(), M.input_win()
+  if log and host and input then
+    return log
   end
-  local origin = vim.api.nvim_get_current_win()
-  local placement = state.opts.position == "left" and "topleft" or "botright"
-  vim.cmd(string.format("noautocmd %s vertical %dsplit", placement, state.opts.width))
-  local win = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(win, M.buf())
-  style(win)
-  M.scroll_to_end(win)
-  if vim.api.nvim_win_is_valid(origin) then
-    vim.api.nvim_set_current_win(origin)
+  -- Rebuild a half-open sidebar (a piece of it was closed alone).
+  for _, win in ipairs({ input, host, log }) do
+    if win and vim.api.nvim_win_is_valid(win) then
+      pcall(vim.api.nvim_win_close, win, true)
+    end
   end
-  return win
+  log = vim.api.nvim_open_win(M.buf(), false, {
+    split = state.opts.position == "left" and "left" or "right",
+    win = -1,
+    width = state.opts.width,
+  })
+  style(log)
+  M.scroll_to_end(log)
+  -- The input and its border are one row taller than the host, so they
+  -- also cover the host's status line.
+  host = vim.api.nvim_open_win(host_buf(), false, { split = "below", win = log, height = INPUT_LINES + 1 })
+  sidebar_style(host)
+  vim.wo[host].winfixheight = true
+  vim.wo[host].statusline = " "
+  input = vim.api.nvim_open_win(M.input_buf(), false, input_config(host))
+  input_style(input)
+  return log
 end
 
 local augroup = vim.api.nvim_create_augroup("agent_mode_session", { clear = true })
@@ -161,11 +286,39 @@ function M.open(opts)
       end
     end,
   })
-  -- :q in the session hides it everywhere, as q does.
+  vim.api.nvim_create_autocmd("WinEnter", {
+    group = augroup,
+    callback = function()
+      local win = vim.api.nvim_get_current_win()
+      local buf = vim.api.nvim_win_get_buf(win)
+      if buf == state.host_buf then
+        -- Moving into the input's room goes into the input.
+        local input = M.input_win()
+        if input then
+          vim.schedule(function()
+            if vim.api.nvim_win_is_valid(input) then
+              vim.api.nvim_set_current_win(input)
+            end
+          end)
+        end
+      elseif vim.api.nvim_win_get_config(win).relative == "" and not is_sidebar(win) then
+        -- Where a message typed in the sidebar asks about: the code window
+        -- you were in last.
+        state.code_win = win
+      end
+    end,
+  })
+  vim.api.nvim_create_autocmd({ "WinResized", "VimResized" }, {
+    group = augroup,
+    callback = function()
+      place_input()
+    end,
+  })
+  -- :q in the sidebar hides it everywhere, as q does.
   vim.api.nvim_create_autocmd("QuitPre", {
     group = augroup,
     callback = function()
-      if vim.api.nvim_get_current_buf() == state.buf then
+      if is_sidebar(vim.api.nvim_get_current_win()) then
         state.quitting = true
       end
     end,
@@ -173,41 +326,53 @@ function M.open(opts)
   vim.api.nvim_create_autocmd("WinClosed", {
     group = augroup,
     callback = function(event)
-      local was_session = event.buf == state.buf
+      local was_sidebar = event.buf == state.buf or event.buf == state.input_buf or event.buf == state.host_buf
       vim.schedule(function()
-        if was_session and state.quitting then
+        if was_sidebar and state.quitting then
           state.quitting = false
           return M.hide()
         end
         state.quitting = false
-        -- A tab left with only the session in it is done: close it, or quit
+        -- A tab left with only the sidebar in it is done: close it, or quit
         -- when it is the last one (as :q would, so unsaved changes stop it).
         if M.close_if_alone() then
           return
         end
-        -- Pinned: :only or <C-w>o elsewhere does not take the session away.
-        if was_session and state.visible then
+        -- Pinned: :only or <C-w>o elsewhere does not take the sidebar away.
+        if was_sidebar and state.visible then
           open_here()
         end
       end)
     end,
   })
+  local origin = vim.api.nvim_get_current_win()
+  if vim.api.nvim_win_get_config(origin).relative == "" and not is_sidebar(origin) then
+    state.code_win = origin
+  end
   return open_here()
 end
 
---- If the session is the only window left in the current tab, close it.
+--- If only the sidebar is left in the current tab, close the tab (or quit).
 --- @return boolean closed
 function M.close_if_alone()
-  local wins = vim.tbl_filter(function(win)
-    return vim.api.nvim_win_get_config(win).relative == ""
-  end, vim.api.nvim_tabpage_list_wins(0))
-  if #wins ~= 1 or vim.api.nvim_win_get_buf(wins[1]) ~= state.buf then
+  local others = 0
+  local sidebar = 0
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_config(win).relative == "" then
+      if is_sidebar(win) then
+        sidebar = sidebar + 1
+      else
+        others = others + 1
+      end
+    end
+  end
+  if others > 0 or sidebar == 0 then
     return false
   end
   if #vim.api.nvim_list_tabpages() > 1 then
     vim.cmd("tabclose")
   else
-    pcall(vim.cmd.quit)
+    pcall(vim.cmd.qall)
   end
   return true
 end
@@ -217,9 +382,11 @@ function M.hide()
   state.visible = false
   vim.api.nvim_clear_autocmds({ group = augroup })
   for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
-    local win = window_in(tab)
-    if win and #vim.api.nvim_tabpage_list_wins(tab) > 1 then
-      vim.api.nvim_win_close(win, false)
+    for _, buf in ipairs({ state.input_buf, state.host_buf, state.buf }) do
+      local win = window_in(tab, buf)
+      if win and #vim.api.nvim_tabpage_list_wins(tab) > 1 then
+        vim.api.nvim_win_close(win, false)
+      end
     end
   end
 end
@@ -233,6 +400,67 @@ function M.toggle(opts)
   end
   M.open(opts)
   return true
+end
+
+-- Input ------------------------------------------------------------------------
+
+local input_ns = vim.api.nvim_create_namespace("agent_mode_session_input")
+
+--- What a message sent from the sidebar does, and the input's title.
+--- @param label string e.g. "ask pi"
+--- @param on_submit fun(text: string, win: integer)
+function M.on_submit(label, on_submit)
+  state.label, state.on_submit = label, on_submit
+  place_input()
+  M.placeholder()
+end
+
+--- Show what to do in the input while it is empty.
+function M.placeholder()
+  local buf = state.input_buf
+  if not (buf and vim.api.nvim_buf_is_valid(buf)) then
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(buf, input_ns, 0, -1)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  if #lines == 1 and lines[1] == "" then
+    vim.api.nvim_buf_set_extmark(buf, input_ns, 0, 0, {
+      virt_text = { { "a message about the code you were in…", "AgentModeSessionDim" } },
+      virt_text_pos = "overlay",
+    })
+  end
+end
+
+--- The code window a message from the sidebar asks about: the one you were
+--- in last in this tab, or any other.
+local function code_window()
+  local win = state.code_win
+  if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_tabpage(win) == vim.api.nvim_get_current_tabpage() then
+    return win
+  end
+  for _, candidate in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_config(candidate).relative == "" and not is_sidebar(candidate) then
+      return candidate
+    end
+  end
+  return nil
+end
+
+--- Send what is in the input, about the cursor in the last code window.
+function M.submit()
+  local buf = M.input_buf()
+  local text = vim.trim(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n"))
+  if text == "" or not state.on_submit then
+    return
+  end
+  local win = code_window()
+  if not win then
+    vim.notify("agent-mode: no code window to ask about", vim.log.levels.WARN)
+    return
+  end
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {})
+  M.placeholder()
+  state.on_submit(text, win)
 end
 
 -- Folds ------------------------------------------------------------------------

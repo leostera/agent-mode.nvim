@@ -3,8 +3,10 @@
 
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 vim.opt.rtp:prepend(root)
-if vim.env.AGENT_MODE_NUI then
-  vim.opt.rtp:append(vim.env.AGENT_MODE_NUI)
+for _, dep in ipairs({ vim.env.AGENT_MODE_NUI, vim.env.AGENT_MODE_SNACKS }) do
+  if dep then
+    vim.opt.rtp:append(dep)
+  end
 end
 vim.cmd("runtime plugin/agent_mode.lua")
 
@@ -49,6 +51,15 @@ function H.buffer(lines, filetype)
   end
   vim.api.nvim_set_current_buf(buf)
   return buf
+end
+
+--- Type each group of keys as a user would, letting Neovim run what it
+--- scheduled in between. Each group ends in normal mode (feedkeys "x").
+function H.type(...)
+  for _, keys in ipairs({ ... }) do
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "xt", false)
+    vim.wait(20)
+  end
 end
 
 function H.lines(buf)

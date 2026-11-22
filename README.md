@@ -56,8 +56,9 @@ agent-mode when you want a quick answer or change at the line you are on.
 ## Install
 
 Requires Neovim 0.12+ and one of the agent CLIs below, installed and logged in.
-lazy.nvim also installs [snacks.nvim](https://github.com/folke/snacks.nvim),
-which draws the settings menu.
+It uses [snacks.nvim](https://github.com/folke/snacks.nvim) for the prompt and
+the settings menu, and [nui.nvim](https://github.com/MunifTanjim/nui.nvim) for
+the session split; lazy.nvim installs both for you.
 
 With [lazy.nvim](https://github.com/folke/lazy.nvim):
 
@@ -169,9 +170,11 @@ Turn on the session and a split on the right (or left) logs every request as
 it happens: what you asked and where, each tool call the agent makes with its
 full command and how long it took, its Lua and what came back, the edits it
 applied, the files it reloaded, and its answer, in Markdown. Tool output is
-folded under each call; `<CR>` opens it. You still ask inline, right below
-the cursor, and the line still shows what the agent is doing, but answers go
-to the session instead of under the line.
+folded under each call; `<CR>` opens it. At the bottom of the split, an input
+box takes follow-ups: `<CR>` sends them about the cursor in the code window
+you were in last. You can still ask inline, right below the cursor, and the
+line still shows what the agent is doing, but answers go to the session
+instead of under the line.
 
 ```lua
 vim.g.agent_mode = { session = { split = { enabled = true, position = "right", width = 64 } } }

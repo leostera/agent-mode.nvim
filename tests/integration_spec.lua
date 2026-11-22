@@ -61,19 +61,18 @@ H.test("the prompt opens right below the cursor and <CR> sends it", function()
   end
   local screen = vim.fn.screenpos(code_win, 2, 7)
 
-  -- Type it the way a user does: the key, the question, <CR>. Nothing is
-  -- lost, so the prompt is in insert mode as soon as it opens.
-  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<F5>what is b?<CR>", true, false, true), "xt", false)
+  -- The key, then the question and <CR> in the prompt.
+  H.type("<F5>", "Awhat is b?", "<CR>")
   input.open = open
   H.truthy(seen.win and seen.win ~= code_win, "a prompt window opened")
   H.eq(screen.row, seen.top, "its top border sits on the row below the cursor")
   H.contains(seen.title, "ask agent")
-  H.eq(code_win, vim.api.nvim_get_current_win(), "back in the code")
+  H.truthy(vim.wait(500, function() return vim.api.nvim_get_current_win() == code_win end), "back in the code")
   vim.wait(50)
   H.eq({ 2, 6 }, vim.api.nvim_win_get_cursor(code_win), "the cursor did not move")
   H.truthy(vim.wait(5000, function()
     return #agent_mode.requests() == 0 and agent_mode.last and agent_mode.last.instruction == "what is b?"
-  end, 20), "the request ran")
+  end, 20), "the request ran: " .. vim.inspect(agent_mode.last and agent_mode.last.instruction) .. " running=" .. #agent_mode.requests())
   H.contains(sent_prompt(), "Instruction: what is b?")
   H.contains(sent_prompt(), "Cursor: line 2")
   agent_mode.dismiss(true)
@@ -85,8 +84,8 @@ H.test("<Esc> in the prompt cancels without asking anything", function()
   local code_win = vim.api.nvim_get_current_win()
   local before = agent_mode.last
   agent_mode.configure({ keymap = "<F5>" })
-  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<F5>never sent<Esc><Esc>", true, false, true), "xt", false)
-  H.eq(code_win, vim.api.nvim_get_current_win())
+  H.type("<F5>", "Anever sent", "<Esc>")
+  H.truthy(vim.wait(500, function() return vim.api.nvim_get_current_win() == code_win end), "back in the code")
   vim.wait(200)
   H.eq(before, agent_mode.last, "no request was made")
 end)
@@ -515,6 +514,11 @@ end)
 H.test(":AgentMode config is a vim.ui.select menu that comes back after each change", function()
   agent_mode.setup({ keymap = false, agent = "pi", model = "m1", thinking = "high" })
   local select, input = vim.ui.select, vim.ui.input
+  -- The vim.ui fallbacks, as without snacks.nvim.
+  local snacks = package.loaded.snacks
+  package.loaded.snacks, package.preload.snacks = nil, function()
+    error("hidden for this test")
+  end
   -- Each step picks the item whose text starts with the given string, from
   -- the menu with that prompt; then the menu reopens.
   local script = {
@@ -544,6 +548,7 @@ H.test(":AgentMode config is a vim.ui.select menu that comes back after each cha
   agent_mode.open_config()
   H.truthy(vim.wait(2000, function() return #script == 0 end), "the menu did not come back after each change")
   vim.ui.select, vim.ui.input = select, input
+  package.loaded.snacks, package.preload.snacks = snacks, nil
   H.contains(table.concat(menus[1], "\n"), "Agent          pi")
   H.eq("claude", agent_mode.config.agent)
   H.eq("opus", agent_mode.config.model)
@@ -638,9 +643,14 @@ H.test("with the session on, it logs the request, tool calls, Lua and the answer
   H.truthy(view.win(), "the session follows to a new tab")
   -- Closing the last other window in a tab closes the tab with it.
   local tabs = #vim.api.nvim_list_tabpages()
-  local tab_wins = vim.api.nvim_tabpage_list_wins(0)
-  H.eq(2, #tab_wins, "the new tab has its window and the session")
-  local other = vim.tbl_filter(function(w) return w ~= view.win() end, tab_wins)[1]
+  local splits = vim.tbl_filter(function(w)
+    return vim.api.nvim_win_get_config(w).relative == ""
+  end, vim.api.nvim_tabpage_list_wins(0))
+  H.eq(3, #splits, "the new tab has its window, the session's log and the input's room")
+  H.truthy(view.input_win(), "the session's input floats at the bottom")
+  local other = vim.tbl_filter(function(w)
+    return vim.bo[vim.api.nvim_win_get_buf(w)].filetype:match("^agentmode") == nil
+  end, splits)[1]
   vim.api.nvim_win_close(other, false)
   H.truthy(vim.wait(500, function() return #vim.api.nvim_list_tabpages() == tabs - 1 end), "the tab left with only the session closes")
   -- :only elsewhere does not take it away; files never open in it.
@@ -655,6 +665,16 @@ H.test("with the session on, it logs the request, tool calls, Lua and the answer
   H.truthy(vim.api.nvim_win_is_valid(code_win), "and leaves the code")
   agent_mode.toggle_session()
   H.truthy(view.win(), "it shows again")
+  -- A message typed in the sidebar's input asks about the code window's cursor.
+  vim.api.nvim_set_current_win(code_win)
+  vim.api.nvim_win_set_cursor(code_win, { 2, 0 })
+  vim.api.nvim_set_current_win(view.input_win())
+  vim.api.nvim_buf_set_lines(view.input_buf(), 0, -1, false, { "and what is b?" })
+  turn = 0
+  view.submit()
+  H.eq({ "" }, vim.api.nvim_buf_get_lines(view.input_buf(), 0, -1, false), "the input empties")
+  H.truthy(vim.wait(5000, function() return agent_mode.last and agent_mode.last.instruction == "and what is b?" and #agent_mode.requests() == 0 end), "sent from the sidebar")
+  H.contains(agent_mode.last.prompt, "Cursor: line 2")
   agent_mode.toggle_session()
   H.eq(nil, view.win(), ":AgentMode session hides it")
   agent_mode.configure({ session = { split = { enabled = false } } })

@@ -826,7 +826,7 @@ function M.prompt()
   local cursor = vim.api.nvim_win_get_cursor(0)
   local bufnr = vim.api.nvim_get_current_buf()
   local function submit(instruction)
-    if instruction then
+    if instruction and vim.trim(instruction) ~= "" then
       M.run(instruction, {
         bufnr = bufnr,
         position = { row = cursor[1], col = cursor[2] },
@@ -917,6 +917,12 @@ local function apply(config)
   end
   local was = M.config and M.config.session.split.enabled
   M.config = config
+  -- A message typed in the session's input asks about the cursor in the
+  -- code window you were in last.
+  session_view.on_submit("ask " .. agent_name(), function(text, win)
+    local cursor = vim.api.nvim_win_get_cursor(win)
+    M.run(text, { bufnr = vim.api.nvim_win_get_buf(win), position = { row = cursor[1], col = cursor[2] } })
+  end)
   -- The session split shows while it is on: open it when turned on (once
   -- Neovim has started), close it when turned off.
   if config.session.split.enabled and not was then
