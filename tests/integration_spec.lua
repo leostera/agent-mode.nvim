@@ -265,14 +265,6 @@ H.test("an agent that fails reports its stderr", function()
   H.contains(err, "exited with code 3")
 end)
 
-H.test("a slow agent times out", function()
-  H.buffer({ "x" })
-  fake_agent({ actions = { { type = "message", text = "late" } } }, 5)
-  agent_mode.config.timeout_ms = 300
-  local err = H.run_agent("anything", { position = { row = 1, col = 0 } }, 3000)
-  H.contains(err, "timed out")
-end)
-
 H.test("cancel stops a running request", function()
   local buf = H.buffer({ "local foo = 1" }, "lua")
   fake_agent({ actions = { { type = "edit", edits = { { start_line = 1, end_line = 1, text = "nope" } } } } }, 5)

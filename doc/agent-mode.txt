@@ -120,7 +120,6 @@ reported by |:checkhealth|. Defaults:
                          next = "]a", prev = "[a" },
       max_lines = 2000,        -- longer buffers are sent as a window
       code_action_timeout_ms = 1000,
-      timeout_ms = 120000,     -- per reply from the agent
       luamode = "confirm",     -- the agent's Lua: "confirm", "allow", false
       luamode_timeout_ms = 10000, -- for Lua that waits (ctx.async)
       max_turns = 8,           -- replies per request
@@ -128,7 +127,7 @@ reported by |:checkhealth|. Defaults:
         enabled = true,        -- one agent session per Neovim
         split = { enabled = false, position = "right", width = 64 },
       },
-      axo = { session = "self", cmd = "axo", timeout_ms = 600000 },
+      axo = { session = "self", cmd = "axo" },
     }
 <
 `keymap` is deprecated: map |<Plug>(AgentMode)| instead.

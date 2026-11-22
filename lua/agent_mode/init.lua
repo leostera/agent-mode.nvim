@@ -182,10 +182,6 @@ local function finish(request, err)
       break
     end
   end
-  if request.timer then
-    request.timer:stop()
-    request.timer:close()
-  end
   if request.stop then
     pcall(request.stop)
   end
@@ -221,20 +217,6 @@ local function finish(request, err)
   if request.on_done then
     request.on_done(err)
   end
-end
-
---- Finish `request` with a timeout error if it runs longer than `timeout_ms`.
---- Our own timer rather than vim.system's, so the request finishes even if a
---- killed agent's children keep its output pipe open.
-local function start_timeout(request, timeout_ms)
-  if request.timer then
-    request.timer:stop()
-    request.timer:close()
-  end
-  request.timer = assert(vim.uv.new_timer())
-  request.timer:start(timeout_ms, 0, vim.schedule_wrap(function()
-    finish(request, string.format("agent timed out after %d ms", timeout_ms))
-  end))
 end
 
 -- Spawned agents --------------------------------------------------------------
@@ -408,7 +390,7 @@ local function handle_reply(request, result, reply)
   log.stderr = result.stderr
 
   if request.finished then
-    return -- cancelled or timed out; the reply came too late
+    return -- cancelled; the reply came too late
   end
   if result.code ~= 0 then
     return finish(
@@ -516,7 +498,6 @@ start_agent = function(request)
   end
   local prompt = turn_prompt(request)
   request.log.prompt = prompt
-  start_timeout(request, M.config.timeout_ms)
 
   request.session = current_session()
   local command, command_err = agent_command(prompt)
@@ -702,7 +683,6 @@ local function send_delegated(request)
   local prompt = context.render_session(moved, request.instruction, nonce, M.config.system_prompt)
   request.log.prompt = prompt
   request.log.argv = { M.config.axo.cmd, "session", "prompt", "--sid", M.config.axo.session }
-  start_timeout(request, M.config.axo.timeout_ms)
   request.spinner:set_status("sending to the Axo Session…")
 
   request.stop = axo.run({

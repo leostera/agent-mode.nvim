@@ -248,7 +248,6 @@ vim.g.agent_mode = {
   answer_keymaps = { enter = "<CR>", dismiss = "<Esc>", next = "]a", prev = "[a" },
   max_lines = 2000,        -- longer buffers are sent as a window around the cursor
   code_action_timeout_ms = 1000,
-  timeout_ms = 120000,     -- per reply from the agent
   luamode = "confirm",     -- let the agent run Lua: "confirm", "allow", or false
   luamode_timeout_ms = 10000, -- how long its asynchronous Lua may take
   max_turns = 8,           -- replies per request; each round of Lua is one
@@ -318,7 +317,7 @@ inline when it only answered.
 ```lua
 opts = {
   agent = vim.env.AXO_SESSION_ID and "axo" or "claude",
-  axo = { session = "self", timeout_ms = 600000 },
+  axo = { session = "self" },
 }
 ```
 

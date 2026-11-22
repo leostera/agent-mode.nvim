@@ -41,7 +41,6 @@ local M = {}
 ---@class agent_mode.AxoOptions
 ---@field session? string
 ---@field cmd? string
----@field timeout_ms? integer
 
 --- What you can set; every field is optional.
 ---@class agent_mode.Config
@@ -57,7 +56,6 @@ local M = {}
 ---@field answer_keymaps? agent_mode.AnswerKeymaps
 ---@field max_lines? integer
 ---@field code_action_timeout_ms? integer
----@field timeout_ms? integer
 ---@field luamode? "confirm"|"allow"|false
 ---@field luamode_timeout_ms? integer
 ---@field max_turns? integer
@@ -80,8 +78,6 @@ M.defaults = {
     session = "self",
     -- The axo CLI.
     cmd = "axo",
-    -- The session's agent works with tools and may take a while.
-    timeout_ms = 600000,
   },
   -- Model to ask for, or nil for the agent's own default.
   model = nil,
@@ -110,8 +106,6 @@ M.defaults = {
   max_lines = 2000,
   -- How long to wait for language servers to list code actions.
   code_action_timeout_ms = 1000,
-  -- How long to wait for each reply from the agent before giving up.
-  timeout_ms = 120000,
   -- Whether the agent may run Lua in Neovim to look things up (references,
   -- the call hierarchy, other files) and show them (tabs, splits, quickfix).
   -- What the code returns goes back to the agent for its next step.
@@ -194,7 +188,6 @@ function M.check(config)
     vim.validate("answer_keymaps", config.answer_keymaps, "table")
     vim.validate("max_lines", config.max_lines, "number")
     vim.validate("code_action_timeout_ms", config.code_action_timeout_ms, "number")
-    vim.validate("timeout_ms", config.timeout_ms, "number")
     vim.validate("luamode", config.luamode, one_of({ "confirm", "allow", false }))
     vim.validate("luamode_timeout_ms", config.luamode_timeout_ms, "number")
     vim.validate("max_turns", config.max_turns, "number")
@@ -207,7 +200,6 @@ function M.check(config)
     vim.validate("axo", config.axo, "table")
     vim.validate("axo.session", config.axo.session, "string")
     vim.validate("axo.cmd", config.axo.cmd, "string")
-    vim.validate("axo.timeout_ms", config.axo.timeout_ms, "number")
   end)
   if not ok then
     return (tostring(err):gsub("^.-:%d+: ", ""))
