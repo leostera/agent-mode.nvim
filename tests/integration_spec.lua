@@ -481,7 +481,7 @@ local function scripted_agent(replies, opts)
   local prompts = {}
   agent_mode.setup(vim.tbl_extend("force", {
     keymap = false,
-    lua = "allow",
+    luamode = "allow",
     session = false,
     agent = function(request)
       prompts[#prompts + 1] = request.prompt
@@ -556,9 +556,9 @@ H.test(":AgentMode config is a vim.ui.select menu that comes back after each cha
   H.eq("claude", agent_mode.config.agent)
   H.eq("opus", agent_mode.config.model)
   H.eq("max", agent_mode.config.thinking)
-  H.eq(false, agent_mode.config.lua)
+  H.eq(false, agent_mode.config.luamode)
   H.eq(false, agent_mode.config.session)
-  H.eq('require("agent_mode").setup({\n  agent = "claude",\n  model = "opus",\n  thinking = "max",\n  lua = false,\n  session = false,\n})', vim.fn.getreg('"'))
+  H.eq('require("agent_mode").setup({\n  agent = "claude",\n  model = "opus",\n  thinking = "max",\n  luamode = false,\n  session = false,\n})', vim.fn.getreg('"'))
 end)
 
 H.test("files the agent changed on disk are reloaded, unless they have unsaved changes", function()
@@ -609,7 +609,7 @@ H.test("with the transcript on, it logs the request, tool calls, Lua and the ans
   local turn = 0
   agent_mode.setup({
     keymap = false,
-    lua = "allow",
+    luamode = "allow",
     session = false,
     transcript = { enabled = true, position = "right", width = 50 },
     agent = function()
@@ -680,7 +680,7 @@ H.test("a request stops after max_turns rounds of lua", function()
   H.eq(3, #prompts)
 end)
 
-H.test("with lua = confirm, declining tells the agent; with lua off, it is not offered", function()
+H.test("with luamode = confirm, declining tells the agent; with luamode off, it is not offered", function()
   H.buffer({ "local a = 1" }, "lua")
   local run_lua = require("agent_mode.run_lua")
   local confirm = run_lua.confirm
@@ -690,7 +690,7 @@ H.test("with lua = confirm, declining tells the agent; with lua off, it is not o
   local prompts = scripted_agent({
     { actions = { { type = "lua", code = "vim.g.ran = true" } } },
     { actions = { { type = "message", text = "ok" } } },
-  }, { lua = "confirm" })
+  }, { luamode = "confirm" })
   H.eq(nil, H.run_agent("try", { position = { row = 1, col = 0 } }))
   run_lua.confirm = confirm
   H.eq(nil, vim.g.ran)
@@ -698,11 +698,11 @@ H.test("with lua = confirm, declining tells the agent; with lua off, it is not o
   agent_mode.dismiss(true)
 
   local seen
-  agent_mode.setup({ keymap = false, lua = false, agent = function(request)
+  agent_mode.setup({ keymap = false, luamode = false, agent = function(request)
     seen = request.system_prompt
     return { argv = { H.root .. "/tests/fake_agent.sh", '{"actions":[{"type":"lua","code":"return 1"}]}', "0" }, stdin = "" }
   end })
-  H.contains(H.run_agent("try", { position = { row = 1, col = 0 } }), "`lua` is off")
+  H.contains(H.run_agent("try", { position = { row = 1, col = 0 } }), "`luamode` is off")
   H.truthy(not seen:find('"type": "lua"', 1, true), "lua offered while off")
 end)
 

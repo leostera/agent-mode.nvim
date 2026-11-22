@@ -54,8 +54,8 @@ local M = {}
 ---@field max_lines? integer
 ---@field code_action_timeout_ms? integer
 ---@field timeout_ms? integer
----@field lua? "confirm"|"allow"|false
----@field lua_timeout_ms? integer
+---@field luamode? "confirm"|"allow"|false
+---@field luamode_timeout_ms? integer
 ---@field max_turns? integer
 ---@field session? boolean
 ---@field transcript? agent_mode.TranscriptOptions
@@ -116,9 +116,9 @@ M.defaults = {
   --     request, n skip)
   --   "allow": run it without asking
   --   false: the agent is not offered Lua
-  lua = "confirm",
+  luamode = "confirm",
   -- How long Lua that called ctx.async() may take to call done().
-  lua_timeout_ms = 10000,
+  luamode_timeout_ms = 10000,
   -- How many replies a request may take; each round of Lua is one more.
   max_turns = 8,
   -- Send every request from this Neovim to one conversation with the agent,
@@ -189,8 +189,8 @@ function M.check(config)
     vim.validate("max_lines", config.max_lines, "number")
     vim.validate("code_action_timeout_ms", config.code_action_timeout_ms, "number")
     vim.validate("timeout_ms", config.timeout_ms, "number")
-    vim.validate("lua", config.lua, one_of({ "confirm", "allow", false }))
-    vim.validate("lua_timeout_ms", config.lua_timeout_ms, "number")
+    vim.validate("luamode", config.luamode, one_of({ "confirm", "allow", false }))
+    vim.validate("luamode_timeout_ms", config.luamode_timeout_ms, "number")
     vim.validate("max_turns", config.max_turns, "number")
     vim.validate("session", config.session, "boolean")
     vim.validate("transcript", config.transcript, "table")

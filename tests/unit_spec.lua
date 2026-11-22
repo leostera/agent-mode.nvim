@@ -278,7 +278,7 @@ H.test("settings work without setup: defaults, then vim.g.agent_mode", function(
   agent_mode.setup()
   H.eq("opencode", agent_mode.config.agent, "vim.g.agent_mode can be a function")
   vim.g.agent_mode = nil
-  H.contains(settings.check(vim.tbl_extend("force", settings.defaults, { lua = "sometimes" })), "lua")
+  H.contains(settings.check(vim.tbl_extend("force", settings.defaults, { luamode = "sometimes" })), "luamode")
   H.contains(settings.check(vim.tbl_extend("force", settings.defaults, { max_turns = "8" })), "max_turns")
   agent_mode.setup({ keymap = false })
 end)

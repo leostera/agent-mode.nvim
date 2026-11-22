@@ -220,7 +220,7 @@ The agent's code works like a code mode:
 
 By default agent-mode shows the code first: `y` runs it, `a` runs it and the
 rest of that request's code, and `n` skips it (the agent is told). Set
-`lua = "allow"` to skip the question, or `lua = false` to not offer Lua at all.
+`luamode = "allow"` to skip the question, or `luamode = false` to not offer Lua at all.
 The code runs with your editor's full permissions, so keep the question on if
 you ask about code you don't trust: a file can contain text that tries to
 steer the agent.
@@ -245,8 +245,8 @@ vim.g.agent_mode = {
   max_lines = 2000,        -- longer buffers are sent as a window around the cursor
   code_action_timeout_ms = 1000,
   timeout_ms = 120000,     -- per reply from the agent
-  lua = "confirm",         -- let the agent run Lua: "confirm", "allow", or false
-  lua_timeout_ms = 10000,  -- how long its asynchronous Lua may take
+  luamode = "confirm",     -- let the agent run Lua: "confirm", "allow", or false
+  luamode_timeout_ms = 10000, -- how long its asynchronous Lua may take
   max_turns = 8,           -- replies per request; each round of Lua is one
   session = true,          -- one conversation for every request from this Neovim
   transcript = { enabled = false, position = "right", width = 64 }, -- answers in a side split

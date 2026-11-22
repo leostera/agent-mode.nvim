@@ -89,7 +89,7 @@ function M.snippet()
   local config = agent_mode().config
   local defaults = agent_mode().defaults
   local lines = { 'require("agent_mode").setup({' }
-  for _, key in ipairs({ "agent", "model", "thinking", "lua", "session", "input", "transcript" }) do
+  for _, key in ipairs({ "agent", "model", "thinking", "luamode", "session", "input", "transcript" }) do
     local value = config[key]
     if type(value) ~= "function" and not vim.deep_equal(value, defaults[key]) then
       lines[#lines + 1] = string.format("  %s = %s,", key, vim.inspect(value))
@@ -188,7 +188,7 @@ local function entries()
     local lua_choices = { { "ask first", "confirm" }, { "allow", "allow" }, { "off", false } }
     list[#list + 1] = {
       label = "Run Lua",
-      value = config.lua == "allow" and "allow" or config.lua == "confirm" and "ask first" or "off",
+      value = config.luamode == "allow" and "allow" or config.luamode == "confirm" and "ask first" or "off",
       change = function(done)
         select(lua_choices, {
           prompt = "Let the agent run Lua in Neovim",
@@ -197,7 +197,7 @@ local function entries()
           end,
         }, function(choice)
           if choice then
-            set({ lua = choice[2] })
+            set({ luamode = choice[2] })
           end
           done()
         end)

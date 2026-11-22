@@ -121,8 +121,8 @@ reported by |:checkhealth|. Defaults:
       max_lines = 2000,        -- longer buffers are sent as a window
       code_action_timeout_ms = 1000,
       timeout_ms = 120000,     -- per reply from the agent
-      lua = "confirm",         -- the agent's Lua: "confirm", "allow", false
-      lua_timeout_ms = 10000,  -- for Lua that waits (ctx.async)
+      luamode = "confirm",     -- the agent's Lua: "confirm", "allow", false
+      luamode_timeout_ms = 10000, -- for Lua that waits (ctx.async)
       max_turns = 8,           -- replies per request
       session = true,          -- one conversation per Neovim
       transcript = { enabled = false, position = "right", width = 64 },

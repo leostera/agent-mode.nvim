@@ -32,8 +32,8 @@ function M.check()
   if vim.fn.hasmapto("<Plug>(AgentMode)", "n") == 0 then
     health.info('No key is mapped to <Plug>(AgentMode); e.g. vim.keymap.set({ "n", "x" }, "<leader>a", "<Plug>(AgentMode)")')
   end
-  if config.lua == "allow" then
-    health.warn("lua = \"allow\": the agent's Lua runs without asking, with your editor's permissions")
+  if config.luamode == "allow" then
+    health.warn("luamode = \"allow\": the agent's Lua runs without asking, with your editor's permissions")
   end
 
   health.start("agent-mode: agent")

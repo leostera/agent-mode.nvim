@@ -65,7 +65,7 @@ local function system_prompt()
   if M.config.session then
     prompt = prompt .. protocol.session_prompt
   end
-  if M.config.lua then
+  if M.config.luamode then
     prompt = prompt .. protocol.lua_prompt
   end
   if M.config.system_prompt and M.config.system_prompt ~= "" then
@@ -300,7 +300,7 @@ run_lua_action = function(request, action, on_done)
   end
   local function run()
     request.spinner:set_status("running Lua in Neovim")
-    run_lua.run(action.code, lua_context(request), M.config.lua_timeout_ms, function(report, ok)
+    run_lua.run(action.code, lua_context(request), M.config.luamode_timeout_ms, function(report, ok)
       if not ok then
         -- The agent gets the error and may fix it; say so, so it is not silent.
         local first = report:match("error: ([^\n]*)") or report
@@ -310,7 +310,7 @@ run_lua_action = function(request, action, on_done)
       record(report)
     end)
   end
-  if M.config.lua == "allow" or request.lua_allowed then
+  if M.config.luamode == "allow" or request.lua_allowed then
     return run()
   end
   request.spinner:set_status("waiting for you to allow its Lua…")
@@ -438,8 +438,8 @@ local function handle_reply(request, result, reply)
       return action.type == kind
     end)
   end
-  if has("lua") and not M.config.lua then
-    return finish(request, "the agent sent Lua to run, but `lua` is off")
+  if has("lua") and not M.config.luamode then
+    return finish(request, "the agent sent Lua to run, but `luamode` is off")
   end
 
   request.lua_results = {}
@@ -503,7 +503,7 @@ start_agent = function(request)
       can_rename = lsp.can_rename(snapshot.bufnr),
       code_actions = request.code_actions,
     }, M.config.max_lines)
-    if M.config.lua then
+    if M.config.luamode then
       request.first_prompt = "Neovim: " .. introspect.summary(snapshot.bufnr) .. "\n" .. request.first_prompt
     end
     request.turns = {}
