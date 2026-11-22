@@ -520,38 +520,45 @@ H.test("requests share one session and run one at a time", function()
   agent_mode.dismiss(true)
 end)
 
-H.test(":AgentModeConfig changes settings from one key each and copies them as Lua", function()
+H.test(":AgentModeConfig is a vim.ui.select menu that comes back after each change", function()
   agent_mode.setup({ keymap = false, agent = "pi", model = "m1", thinking = "high" })
-  local select = vim.ui.select
-  local picks = { Agent = "claude", Thinking = "max" }
+  local select, input = vim.ui.select, vim.ui.input
+  -- Each step picks the item whose text starts with the given string, from
+  -- the menu with that prompt; then the menu reopens.
+  local script = {
+    { "agent-mode", "Agent" }, { "Agent", "claude" },
+    { "agent-mode", "Model" }, { "Model for claude", "type a model" },
+    { "agent-mode", "Thinking" }, { "Thinking", "max" },
+    { "agent-mode", "Run Lua" }, { "Let the agent run Lua in Neovim", "off" },
+    { "agent-mode", "Conversation" },
+    { "agent-mode", "Copy as Lua" }, -- copies and closes the menu
+  }
+  local menus = {}
   vim.ui.select = function(items, opts, on_choice)
-    on_choice(picks[opts.prompt], picks[opts.prompt] and vim.fn.index(items, picks[opts.prompt]) + 1)
+    local step = table.remove(script, 1)
+    H.eq(step[1], opts.prompt)
+    local format = opts.format_item or tostring
+    menus[#menus + 1] = vim.tbl_map(format, items)
+    for _, item in ipairs(items) do
+      if step[2] and vim.startswith(format(item), step[2]) then
+        return on_choice(item)
+      end
+    end
+    on_choice(nil)
   end
-  local win = agent_mode.open_config()
-  local buf = vim.api.nvim_win_get_buf(win)
-  local function press(keys)
-    vim.api.nvim_feedkeys(vim.keycode(keys), "x", false)
-    vim.wait(50)
+  vim.ui.input = function(_, on_confirm)
+    on_confirm("opus")
   end
-  H.contains(table.concat(H.lines(buf), "\n"), "a  Agent         pi")
-  press("a")
+  agent_mode.open_config()
+  H.truthy(vim.wait(2000, function() return #script == 0 end), "the menu did not come back after each change")
+  vim.ui.select, vim.ui.input = select, input
+  H.contains(table.concat(menus[1], "\n"), "Agent             pi")
   H.eq("claude", agent_mode.config.agent)
-  H.eq(nil, agent_mode.config.model, "a new agent clears the model")
-  H.eq(nil, agent_mode.config.thinking, "and the thinking level")
-  press("t")
+  H.eq("opus", agent_mode.config.model)
   H.eq("max", agent_mode.config.thinking)
-  press("l")
-  H.eq("allow", agent_mode.config.lua)
-  press("l")
   H.eq(false, agent_mode.config.lua)
-  press("c")
   H.eq(false, agent_mode.config.session)
-  H.contains(table.concat(H.lines(buf), "\n"), "Thinking      max")
-  press("y")
-  H.eq('require("agent_mode").setup({\n  agent = "claude",\n  thinking = "max",\n  lua = false,\n  session = false,\n  keymap = false,\n})', vim.fn.getreg('"'))
-  press("q")
-  H.truthy(not vim.api.nvim_win_is_valid(win))
-  vim.ui.select = select
+  H.eq('require("agent_mode").setup({\n  agent = "claude",\n  model = "opus",\n  thinking = "max",\n  lua = false,\n  session = false,\n  keymap = false,\n})', vim.fn.getreg('"'))
 end)
 
 H.test("lua results go back to the agent until it answers", function()

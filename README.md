@@ -117,9 +117,14 @@ Commands:
 - `:AgentModeAgent [name]`: show or switch the agent, with completion
 - `:AgentModeCancel`: stop the requests on the cursor line, or all of them
 - `:AgentModeDismiss[!]`: clear the answer nearest the cursor (all with `!`)
-- `:AgentModeConfig`: change the agent, model, thinking, Lua, conversation,
-  and prompt settings from a window, one key each; `y` copies them as Lua for
-  your config
+- `:AgentModeConfig`: a menu to change the agent, model, thinking, Lua,
+  conversation, and prompt settings, start a new conversation, or copy your
+  settings as Lua for your config. It uses `vim.ui.select`, so with a picker
+  that provides it ([snacks.nvim](https://github.com/folke/snacks.nvim),
+  [fzf-lua](https://github.com/ibhagwan/fzf-lua),
+  [telescope-ui-select](https://github.com/nvim-telescope/telescope-ui-select.nvim),
+  [dressing.nvim](https://github.com/stevearc/dressing.nvim)) it gets that
+  picker's fuzzy search, e.g. across pi's models
 - `:AgentModeNew`: start a new conversation with the agent
 - `:AgentModeLog`: show the last prompt, command, session, and raw reply
 
