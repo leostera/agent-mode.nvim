@@ -231,11 +231,12 @@ these tools, each on a request's `context_id`:
   finish             end the request
 
 Add the server to your agent once (`:AgentMode attach` shows the commands
-with paths filled in), start it in your project's folder, and tell it to
-call wait_for_request in a loop. While it listens, requests go to it.
-The server finds Neovim by `--server`, `$AGENT_MODE_SERVER`, `$NVIM`, or
-the Neovim whose working directory is closest to its own (each Neovim
-registers itself under `stdpath("state")/agent-mode/servers`).
+with paths filled in), start it in any folder, and tell it to call
+wait_for_request in a loop. While it listens, requests go to it.
+The server finds Neovim by `--server`, `$AGENT_MODE_SERVER`, `$NVIM`, then
+the Neovim in the agent's project (the closest working directory at or above its folder), then the
+one you used last, focused or asked from (each Neovim registers itself under
+`stdpath("state")/agent-mode/servers`).
 
 With no agent attached, `session.mode` decides: "start" starts your agent,
 "attach" waits for one and shows how to attach it, "ask" asks each time.

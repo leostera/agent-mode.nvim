@@ -33,8 +33,9 @@ local function registered()
   return found
 end
 
---- The Neovim to talk to: given, inherited, or the one whose folder is the
---- closest one above the folder the agent runs in.
+--- The Neovims to try, in order: given, inherited, then every registered
+--- one. Of those, a Neovim in the agent's project (the closest folder at or
+--- above it) comes first, then the one the user used last.
 local function addresses()
   local list = {}
   for _, a in ipairs({ server_flag, os.getenv("AGENT_MODE_SERVER"), os.getenv("NVIM") }) do
@@ -42,13 +43,26 @@ local function addresses()
       list[#list + 1] = a
     end
   end
-  local cwd = vim.fs.normalize(vim.uv.cwd() or "")
-  local candidates = vim.tbl_filter(function(info)
-    local dir = vim.fs.normalize(info.cwd or "")
-    return cwd == dir or vim.startswith(cwd, dir .. "/") or vim.startswith(dir, cwd .. "/")
-  end, registered())
+  local function real(path)
+    return vim.fs.normalize(vim.uv.fs_realpath(path or "") or path or "")
+  end
+  local cwd = real(vim.uv.cwd())
+  local function closeness(info)
+    local dir = real(info.cwd)
+    -- Only folders at or above the agent's: a Neovim somewhere below an
+    -- agent in ~ is not in its project.
+    if cwd == dir or vim.startswith(cwd, dir .. "/") then
+      return #dir
+    end
+    return -1
+  end
+  local candidates = registered()
   table.sort(candidates, function(a, b)
-    return #a.cwd > #b.cwd
+    local ca, cb = closeness(a), closeness(b)
+    if ca ~= cb then
+      return ca > cb
+    end
+    return (tonumber(a.used_at) or 0) > (tonumber(b.used_at) or 0)
   end)
   for _, info in ipairs(candidates) do
     list[#list + 1] = info.address
@@ -82,7 +96,7 @@ local function call_tool(name, args)
   local chan = connect()
   if not chan then
     return "No Neovim with agent-mode was found for " .. (vim.uv.cwd() or "this folder")
-      .. ". Open Neovim in the project (agent-mode loaded), or pass --server <address>.", true
+      .. ". Start Neovim with agent-mode installed, or pass --server <address>.", true
   end
   local ok, ticket = pcall(vim.rpcrequest, chan, "nvim_exec_lua", "return require('agent_mode').tool_call(...)", { name, args or {} })
   if not ok then

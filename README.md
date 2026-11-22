@@ -185,16 +185,18 @@ agent to listen.
    For OpenCode, add it to `~/.config/opencode/opencode.json`:
    `"mcp": { "agent-mode": { "type": "local", "command": ["/path/to/agent-mode.nvim/bin/agent-mode-mcp"] } }`.
 
-2. Start the agent in your project's folder and tell it: "Listen to Neovim:
+2. Start the agent, in any folder, and tell it: "Listen to Neovim:
    call agent-mode's wait_for_request tool, handle each request it returns
    with agent-mode's tools, and call wait_for_request again after each one,
    until I say stop." (`:AgentMode attach` copies this for you.)
 
 While it listens, requests you make at your cursor go to it instead of a new
-agent. The server finds your Neovim by the folder the agent runs in (each
-Neovim registers itself in its state folder when agent-mode loads; with
-lazy.nvim, add `event = "VeryLazy"` so that happens at startup rather than on
-your first request), or by `$NVIM` inside Neovim's terminal. Without the listening loop, the agent can still use the tools when
+agent. The server connects to the Neovim in the agent's project if there is
+one, and otherwise to the Neovim you used last (focused, or asked from), from
+any folder; inside Neovim's terminal it uses that Neovim (`$NVIM`), and
+`--server <address>` picks one. Each Neovim registers itself in its state
+folder when agent-mode loads; with lazy.nvim, add `event = "VeryLazy"` so that
+happens at startup rather than on your first request. Without the listening loop, the agent can still use the tools when
 you ask it to in its own window: "look at what I have selected in Neovim",
 "rename this with the language server".
 

@@ -871,6 +871,8 @@ function M.run(instruction, opts)
   if instruction == "" then
     return
   end
+  -- The Neovim you ask from is the one agents attach to next.
+  require("agent_mode.server").register()
 
   local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
   local position = opts.position
@@ -980,7 +982,8 @@ function M.attach()
     "   OpenCode:  in ~/.config/opencode/opencode.json, under \"mcp\":",
     '              "agent-mode": { "type": "local", "command": ["' .. M.mcp_server .. '"] }',
     "",
-    "   Run the agent in this project's folder, and it finds this Neovim.",
+    "   Run the agent in any folder: it finds the Neovim in its project, or",
+    "   else the one you used last.",
     "",
     "2. Tell it (copied to your clipboard):",
     "",
