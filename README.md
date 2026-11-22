@@ -203,3 +203,7 @@ make test-live AGENTS=claude,codex,opencode,pi   # against real agents; costs to
 
 The integration tests use a scripted agent, and a real `lua-language-server`
 when one is installed (on `PATH` or through mason).
+
+## License
+
+MIT. See [LICENSE](LICENSE).
