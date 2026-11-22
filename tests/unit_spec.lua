@@ -1,4 +1,4 @@
--- Unit tests for the pure parts: the reply protocol, line edits, context
+-- Unit tests for the pure parts: checking edits, line edits, context
 -- rendering, and agent command building.
 --   nvim --headless -l tests/unit_spec.lua
 
@@ -10,44 +10,18 @@ local agents = require("agent_mode.agents")
 
 -- protocol ------------------------------------------------------------------
 
-H.test("protocol parses every action type", function()
-  local response = assert(protocol.parse(vim.json.encode({
-    summary = "did things",
-    actions = {
-      { type = "edit", edits = { { start_line = 1, end_line = 2, text = "x" } } },
-      { type = "lsp_rename", new_name = "presenter" },
-      { type = "code_action", id = 3 },
-      { type = "message", text = "hi" },
-    },
-  })))
-  H.eq("did things", response.summary)
-  H.eq({
-    { type = "edit", edits = { { start_line = 1, end_line = 2, text = "x" } } },
-    { type = "lsp_rename", new_name = "presenter" },
-    { type = "code_action", id = 3 },
-    { type = "message", text = "hi" },
-  }, response.actions)
-end)
-
-H.test("protocol tolerates a markdown fence around the JSON", function()
-  local response = assert(protocol.parse('Sure!\n```json\n{"actions":[{"type":"message","text":"ok"}]}\n```'))
-  H.eq("ok", response.actions[1].text)
-end)
-
-H.test("protocol rejects replies it cannot trust", function()
+H.test("protocol checks the edits an agent sends", function()
+  H.eq({ { start_line = 1, end_line = 2, text = "x" } }, (protocol.edits({ { start_line = 1, end_line = 2, text = "x" } })))
   local cases = {
-    ["no JSON"] = "I renamed it for you",
-    ["broken JSON"] = '{"actions": [',
-    ["no actions"] = '{"actions": []}',
-    ["unknown type"] = '{"actions": [{"type": "delete_file"}]}',
-    ["fractional line"] = '{"actions": [{"type": "edit", "edits": [{"start_line": 1.5, "end_line": 2, "text": ""}]}]}',
-    ["end before start"] = '{"actions": [{"type": "edit", "edits": [{"start_line": 5, "end_line": 3, "text": ""}]}]}',
-    ["empty rename"] = '{"actions": [{"type": "lsp_rename", "new_name": ""}]}',
-    ["string id"] = '{"actions": [{"type": "code_action", "id": "1"}]}',
+    ["no edits"] = {},
+    ["not a list"] = "x",
+    ["fractional line"] = { { start_line = 1.5, end_line = 2, text = "" } },
+    ["end before start"] = { { start_line = 5, end_line = 3, text = "" } },
+    ["no text"] = { { start_line = 1, end_line = 1 } },
   }
-  for name, reply in pairs(cases) do
-    local response, err = protocol.parse(reply)
-    H.eq(nil, response, name)
+  for name, raw in pairs(cases) do
+    local list, err = protocol.edits(raw)
+    H.eq(nil, list, name)
     H.truthy(err, name .. " should explain the failure")
   end
 end)
@@ -143,13 +117,14 @@ local request = {
   model = "some-model",
   thinking = "high",
   args = { "--extra" },
+  mcp = { command = "/p/bin/agent-mode-mcp", args = { "--server", "/tmp/nvim.sock" }, server = "/tmp/nvim.sock", pi_extension = "/p/pi/agent-mode.ts" },
 }
 
 H.test("the pi agent passes model, thinking, args, and system prompt", function()
   local command = agents.pi(request)
   local argv = table.concat(command.argv, " ")
-  H.contains(argv, "pi --print --mode json --tools +codemode")
-  H.eq("pi-json", command.output)
+  H.contains(argv, "pi --print --tools +codemode --no-context-files --no-skills --extension /p/pi/agent-mode.ts")
+  H.eq({ AGENT_MODE_SERVER = "/tmp/nvim.sock" }, command.env, "the extension finds this Neovim")
   H.contains(argv, "--thinking high")
   H.contains(argv, "--model some-model")
   H.contains(argv, "--extra --system-prompt ")
@@ -163,14 +138,18 @@ H.test("the codex agent writes only in the workspace and puts the system prompt 
   H.contains(argv, "codex exec --skip-git-repo-check --sandbox workspace-write --color never --ephemeral")
   H.contains(argv, 'model_reasoning_effort="high"')
   H.contains(argv, 'model="some-model" --extra -')
+  H.contains(argv, '-c mcp_servers.agent_mode.command="/p/bin/agent-mode-mcp" -c mcp_servers.agent_mode.args=["--server","/tmp/nvim.sock"]')
   H.contains(command.stdin, "SYSTEM")
   H.contains(command.stdin, "PROMPT")
 end)
 
-H.test("the claude agent runs without tools or a saved session", function()
+H.test("the claude agent runs with agent-mode's MCP server only, and no saved session", function()
   local command = agents.claude(request)
   local argv = table.concat(command.argv, " ")
-  H.contains(argv, "claude --print --output-format text --permission-mode acceptEdits --strict-mcp-config --no-session-persistence")
+  H.contains(argv, "claude --print --output-format text --permission-mode acceptEdits --mcp-config ")
+  H.contains(argv, "--strict-mcp-config --allowedTools mcp__agent-mode --no-session-persistence")
+  local config = vim.json.decode(command.argv[8])
+  H.eq({ command = "/p/bin/agent-mode-mcp", args = { "--server", "/tmp/nvim.sock" } }, config.mcpServers["agent-mode"])
   H.contains(argv, "--model some-model --effort high --extra --system-prompt-file ")
   H.eq({ "SYSTEM" }, vim.fn.readfile(command.argv[#command.argv]))
   H.eq("PROMPT", command.stdin)
@@ -178,7 +157,9 @@ end)
 
 H.test("the opencode agent auto-approves, since nobody can answer", function()
   local command = agents.opencode(request)
-  H.eq({ "opencode", "run", "--auto", "--model", "some-model", "--extra" }, command.argv)
+  H.eq({ "opencode", "run", "--standalone", "--auto", "--model", "some-model", "--extra" }, command.argv)
+  local config = vim.json.decode(command.env.OPENCODE_CONFIG_CONTENT)
+  H.eq({ "/p/bin/agent-mode-mcp", "--server", "/tmp/nvim.sock" }, config.mcp["agent-mode"].command)
   H.contains(command.stdin, "SYSTEM")
   H.contains(command.stdin, "PROMPT")
 end)
@@ -211,6 +192,7 @@ end)
 H.test("cmd replaces the agent's executable", function()
   local agent_mode = require("agent_mode")
   agent_mode.setup({ keymap = false, agent = "claude", cmd = "/opt/bin/claude" })
+  vim.wait(10)
   local captured
   local system = vim.system
   vim.system = function(argv)
@@ -226,7 +208,7 @@ H.test("cmd replaces the agent's executable", function()
 end)
 
 H.test("agents default to quick reasoning when thinking is unset", function()
-  local quick = { system_prompt = "SYSTEM", prompt = "PROMPT", args = {} }
+  local quick = { system_prompt = "SYSTEM", prompt = "PROMPT", args = {}, mcp = request.mcp }
   H.contains(table.concat(agents.pi(quick).argv, " "), "--thinking off")
   H.contains(table.concat(agents.codex(quick).argv, " "), 'model_reasoning_effort="low"')
   H.truthy(not table.concat(agents.pi(quick).argv, " "):find("--model", 1, true))
@@ -256,7 +238,7 @@ H.test("configure changes only what it is given, at runtime", function()
 end)
 
 H.test(":AgentMode has subcommands, each completed", function()
-  H.eq({ "agent", "ask", "cancel", "config", "dismiss", "log", "new", "session" }, vim.fn.getcompletion("AgentMode ", "cmdline"))
+  H.eq({ "agent", "ask", "attach", "cancel", "config", "dismiss", "log", "new" }, vim.fn.getcompletion("AgentMode ", "cmdline"))
   H.eq({ "claude", "codex" }, vim.fn.getcompletion("AgentMode agent c", "cmdline"))
   H.eq({ "pi", "claude", "codex", "opencode", "axo" }, vim.fn.getcompletion("AgentMode agent ", "cmdline"))
   H.truthy(vim.fn.maparg("<Plug>(AgentMode)", "n") ~= "", "<Plug>(AgentMode) is mapped in normal mode")
@@ -279,7 +261,7 @@ H.test("settings work without setup: defaults, then vim.g.agent_mode", function(
   H.eq("opencode", agent_mode.config.agent, "vim.g.agent_mode can be a function")
   vim.g.agent_mode = nil
   H.contains(settings.check(vim.tbl_extend("force", settings.defaults, { luamode = "sometimes" })), "luamode")
-  H.contains(settings.check(vim.tbl_extend("force", settings.defaults, { max_turns = "8" })), "max_turns")
+  H.contains(settings.check(vim.tbl_extend("force", settings.defaults, { session = { enabled = true, mode = "later" } })), "session.mode")
   agent_mode.setup({ keymap = false })
 end)
 
@@ -287,55 +269,6 @@ H.test("setup rejects an unknown agent", function()
   local ok, err = pcall(require("agent_mode").setup, { agent = "clippy", keymap = false })
   H.truthy(not ok)
   H.contains(err, "unknown agent")
-end)
-
--- decoders -------------------------------------------------------------------
-
-H.test("the pi-json decoder streams thinking and text and returns the final message", function()
-  local decoder = agents.decoders["pi-json"]()
-  local function event(update)
-    return vim.json.encode({ type = "message_update", assistantMessageEvent = update }) .. "\n"
-  end
-  local stream = event({ type = "thinking_delta", delta = "Let me see" })
-    .. event({ type = "text_delta", delta = '{"summary": "Ren' })
-    .. event({ type = "text_delta", delta = 'aming"' })
-    .. vim.json.encode({
-      type = "message_end",
-      message = { role = "assistant", content = { { type = "text", text = '{"summary": "Renaming"}' } } },
-    })
-    .. "\n"
-  -- Feed it in awkward pieces, as a pipe would.
-  local events = {}
-  for i = 1, #stream, 7 do
-    vim.list_extend(events, decoder.feed(stream:sub(i, i + 6)))
-  end
-  H.eq({
-    { kind = "thinking", delta = "Let me see" },
-    { kind = "text", delta = '{"summary": "Ren' },
-    { kind = "text", delta = 'aming"' },
-  }, events)
-  H.eq('{"summary": "Renaming"}', decoder.reply())
-end)
-
-H.test("the pi-json decoder stays fast on long lines arriving in pieces", function()
-  -- pi's events repeat the whole prompt; a buffer-sized prompt makes lines
-  -- of hundreds of KB that arrive over many reads.
-  local decoder = agents.decoders["pi-json"]()
-  local line = vim.json.encode({ type = "agent_end", messages = { { role = "user", content = string.rep("x", 400000) } } })
-  local start = vim.uv.hrtime()
-  for i = 1, #line, 8192 do
-    decoder.feed(line:sub(i, i + 8191))
-  end
-  decoder.feed("\n")
-  local ms = (vim.uv.hrtime() - start) / 1e6
-  H.truthy(ms < 200, string.format("feeding a 400 KB line took %.0f ms", ms))
-end)
-
-H.test("the text decoder passes stdout through", function()
-  local decoder = agents.decoders.text()
-  H.eq({ { kind = "text", delta = "ab" } }, decoder.feed("ab"))
-  decoder.feed("c")
-  H.eq("abc", decoder.reply())
 end)
 
 -- rebase ---------------------------------------------------------------------
@@ -549,55 +482,6 @@ local function run_code(code, ctx, timeout_ms)
   end, 10), "lua did not finish")
   return report
 end
-
-H.test("the protocol accepts lua actions with code", function()
-  local response = assert(protocol.parse('{"actions":[{"type":"lua","code":"return 1"}]}'))
-  H.eq({ { type = "lua", code = "return 1" } }, response.actions)
-  local _, err = protocol.parse('{"actions":[{"type":"lua","code":""}]}')
-  H.contains(err, "lua action 1 has no code")
-end)
-
-H.test("pi's tool calls show up as what the agent is looking at", function()
-  local decoder = agents.decoders["pi-json"]()
-  local events = decoder.feed(vim.json.encode({
-    type = "tool_execution_start",
-    toolCallId = "t1",
-    toolName = "grep",
-    args = { pattern = "function M.plan" },
-  }) .. "\n" .. vim.json.encode({
-    type = "tool_execution_end",
-    toolCallId = "t1",
-    toolName = "grep",
-    result = { content = { { type = "text", text = "lua/x.lua:3" } } },
-    isError = false,
-    durationMs = 12,
-  }) .. "\n")
-  H.eq({
-    {
-      kind = "tool",
-      delta = "grep function M.plan",
-      call = { id = "t1", name = "grep", args = { pattern = "function M.plan" } },
-    },
-    { kind = "tool_end", delta = "", call = { id = "t1", name = "grep", output = "lua/x.lua:3", error = false, ms = 12 } },
-  }, events)
-  H.eq("read " .. string.rep("x", 39) .. "…", agents.describe_tool("read", { path = string.rep("x", 50) }))
-  H.eq("codemode", agents.describe_tool("codemode", {}))
-end)
-
-H.test("a summary without actions is the answer", function()
-  local response = assert(protocol.parse('{"summary":"Mango","actions":[]}'))
-  H.eq({ { type = "message", text = "Mango" } }, response.actions)
-  local _, err = protocol.parse('{"actions":[]}')
-  H.contains(err, "no actions")
-end)
-
-H.test("tool-call markup reads as the same actions", function()
-  local response = assert(protocol.parse(
-    '<invoke name="lua">\n<parameter name="code">local t = {}\nreturn t</parameter>\n</invoke>\n'
-      .. '<invoke name="code_action"><parameter name="id">2</parameter></invoke>'
-  ))
-  H.eq({ { type = "lua", code = "local t = {}\nreturn t" }, { type = "code_action", id = 2 } }, response.actions)
-end)
 
 H.test("am.lsp calls back at once when no server supports the method", function()
   H.eq("returned:\n{}", run_code("local done = ctx.async() am.lsp('callHierarchy/incomingCalls', {}, done)"))

@@ -1,29 +1,82 @@
 -- End-to-end tests of a request, with a scripted agent standing in for the
--- model (tests/fake_agent.sh) and, when installed, a real Lua language server.
+-- model (tests/fake_agent.lua, which calls agent-mode's MCP server) and,
+-- when installed, a real Lua language server.
 --   nvim --headless -l tests/integration_spec.lua
 
 local H = dofile(vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h") .. "/harness.lua")
 local agent_mode = require("agent_mode")
 
 local stdin_file = vim.fn.tempname()
+local results_file = vim.fn.tempname()
 
---- Configure agent-mode to use the fake agent, which replies with `reply`
+--- The tool calls the fake agent makes for `reply`: { summary?, actions }
+--- in the shape of the actions it can take, or a string it says instead.
+local function calls_for(reply, delay)
+  local calls, text = {}, ""
+  if delay and delay > 0 then
+    calls[#calls + 1] = { sleep = delay }
+  end
+  if type(reply) == "string" then
+    return calls, reply
+  end
+  local function call(name, arguments)
+    arguments.context_id = "@ID@"
+    calls[#calls + 1] = { name = name, arguments = arguments }
+  end
+  if reply.summary then
+    call("set_status", { text = reply.summary })
+  end
+  for _, action in ipairs(reply.actions or {}) do
+    if action.type == "edit" then
+      call("edit", { edits = action.edits })
+    elseif action.type == "lsp_rename" then
+      call("lsp_rename", { new_name = action.new_name })
+    elseif action.type == "code_action" then
+      call("code_action", { id = action.id })
+    elseif action.type == "message" then
+      call("show_answer", { text = action.text })
+    elseif action.type == "lua" then
+      call("run_lua", { code = action.code })
+    end
+  end
+  return calls, text
+end
+
+--- The command for the fake agent, which acts out `reply` after `delay`.
+local function fake_command(request, reply, delay)
+  local calls, text = calls_for(reply, delay)
+  return {
+    argv = { "nvim", "--clean", "--headless", "-l", H.root .. "/tests/fake_agent.lua" },
+    stdin = request.system_prompt .. "\n---\n" .. request.prompt,
+    env = {
+      AGENT_MODE_FAKE_CALLS = vim.json.encode(calls),
+      AGENT_MODE_FAKE_TEXT = text,
+      AGENT_MODE_FAKE_MCP = vim.json.encode({ command = request.mcp.command, args = request.mcp.args }),
+      AGENT_MODE_FAKE_STDIN = stdin_file,
+      AGENT_MODE_FAKE_RESULTS = results_file,
+    },
+  }
+end
+
+--- Configure agent-mode to use the fake agent, which acts out `reply`
 --- after `delay` seconds.
-local function fake_agent(reply, delay)
-  vim.env.AGENT_MODE_FAKE_REPLY = type(reply) == "table" and vim.json.encode(reply) or reply
-  vim.env.AGENT_MODE_FAKE_DELAY = tostring(delay or 0)
-  vim.env.AGENT_MODE_FAKE_STDIN = stdin_file
-  agent_mode.setup({
+local function fake_agent(reply, delay, extra)
+  agent_mode.setup(vim.tbl_extend("force", {
     keymap = false,
     code_action_timeout_ms = 3000,
     agent = function(request)
-      return { argv = { H.root .. "/tests/fake_agent.sh" }, stdin = request.system_prompt .. "\n---\n" .. request.prompt }
+      return fake_command(request, reply, delay)
     end,
-  })
+  }, extra or {}))
 end
 
 local function sent_prompt()
   return table.concat(vim.fn.readfile(stdin_file), "\n")
+end
+
+--- What the fake agent's tool calls returned, in order.
+local function tool_results()
+  return table.concat(vim.fn.readfile(results_file), "\n")
 end
 
 H.test("an edit reply updates the buffer in place", function()
@@ -125,11 +178,7 @@ local function scripted_agent(replies, extra)
     agent = function(request)
       local instruction = request.prompt:match("Instruction: ([^\n]*)")
       local script = replies[instruction]
-      return {
-        argv = { H.root .. "/tests/fake_agent.sh", vim.json.encode(script[1]), tostring(script[2]) },
-        stdin = request.prompt,
-        output = script.output,
-      }
+      return fake_command(request, script[1], script[2])
     end,
   }, extra or {}))
 end
@@ -207,23 +256,17 @@ H.test("a question's answer shows inline below its line, and the dismiss key cle
   H.eq(0, #answer.list(buf))
 end)
 
-H.test("the spinner shows the summary while the agent is still writing", function()
+H.test("set_status shows by the line while the agent works", function()
   H.buffer({ "local a = 1" }, "lua")
-  local function event(update)
-    return vim.json.encode({ type = "message_update", assistantMessageEvent = update })
-  end
-  local final = '{"summary": "Renaming a to alpha", "actions": [{"type": "message", "text": "ok"}]}'
-  local stream = table.concat({
-    event({ type = "thinking_delta", delta = "The user wants a rename" }),
-    event({ type = "text_delta", delta = '{"summary": "Renaming a to alpha", ' }),
-    event({ type = "text_delta", delta = '"actions": [{"type": "message", "text": "ok"}]}' }),
-    vim.json.encode({ type = "message_end", message = { role = "assistant", content = { { type = "text", text = final } } } }),
-  }, "\n")
-  vim.env.AGENT_MODE_FAKE_LINES = "0.4"
   agent_mode.setup({
     keymap = false,
     agent = function(request)
-      return { argv = { H.root .. "/tests/fake_agent.sh", stream, "0" }, stdin = request.prompt, output = "pi-json" }
+      local command = fake_command(request, { actions = { { type = "message", text = "ok" } } })
+      local calls = vim.json.decode(command.env.AGENT_MODE_FAKE_CALLS)
+      table.insert(calls, 1, { name = "set_status", arguments = { context_id = "@ID@", text = "Renaming a to alpha" } })
+      table.insert(calls, 2, { sleep = 0.5 })
+      command.env.AGENT_MODE_FAKE_CALLS = vim.json.encode(calls)
+      return command
     end,
   })
   local seen = {}
@@ -234,25 +277,24 @@ H.test("the spinner shows the summary while the agent is still writing", functio
       done = true
     end,
   })
-  vim.wait(5000, function()
+  vim.wait(8000, function()
     local request = agent_mode.requests()[1]
     if request then
       seen[request.spinner:status()] = true
     end
     return done
   end, 20)
-  vim.env.AGENT_MODE_FAKE_LINES = nil
-  H.truthy(seen["thinking: …The user wants a rename"], "thinking shown: " .. vim.inspect(seen))
-  H.truthy(seen["Renaming a to alpha"], "summary shown: " .. vim.inspect(seen))
+  H.truthy(seen["Renaming a to alpha"], "status shown: " .. vim.inspect(seen))
+  agent_mode.dismiss(true)
 end)
 
-H.test("an unparseable reply leaves the buffer alone and is logged", function()
+H.test("an agent that only answers in words has its words shown inline", function()
   local buf = H.buffer({ "local foo = 1" }, "lua")
-  fake_agent("I have renamed the variable for you!")
-  local err = H.run_agent("rename to bar", { position = { row = 1, col = 6 } })
-  H.contains(err, "no JSON object")
+  fake_agent("foo is **one**.")
+  H.eq(nil, H.run_agent("what is foo?", { position = { row = 1, col = 6 } }))
   H.eq({ "local foo = 1" }, H.lines(buf))
-  H.eq("I have renamed the variable for you!", agent_mode.last.stdout)
+  H.contains(table.concat(require("agent_mode.answer").list(buf)[1].lines, "\n"), "foo is **one**.")
+  agent_mode.dismiss(true)
 end)
 
 H.test("an agent that fails reports its stderr", function()
@@ -468,21 +510,6 @@ end
 
 --- An agent that answers each turn with the next of `replies`, and keeps
 --- the prompts it was sent.
-local function scripted_agent(replies, opts)
-  local prompts = {}
-  agent_mode.setup(vim.tbl_extend("force", {
-    keymap = false,
-    luamode = "allow",
-    session = { enabled = false },
-    agent = function(request)
-      prompts[#prompts + 1] = request.prompt
-      local reply = replies[#prompts] or replies[#replies]
-      return { argv = { H.root .. "/tests/fake_agent.sh", vim.json.encode(reply), "0" }, stdin = "" }
-    end,
-  }, opts or {}))
-  return prompts
-end
-
 H.test("requests share one session and run one at a time", function()
   local buf = H.buffer({ "local a = 1", "local b = 2" }, "lua")
   local calls = {}
@@ -490,11 +517,9 @@ H.test("requests share one session and run one at a time", function()
     keymap = false,
     agent = function(request)
       calls[#calls + 1] = { session = request.session, at = vim.uv.hrtime() }
-      return {
-        argv = { H.root .. "/tests/fake_agent.sh", '{"actions":[{"type":"message","text":"ok"}]}', "0.3" },
-        stdin = "",
-        session_id = request.session.id or "sess-1",
-      }
+      local command = fake_command(request, { actions = { { type = "message", text = "ok" } } }, 0.3)
+      command.session_id = request.session.id or "sess-1"
+      return command
     end,
   })
   local done = 0
@@ -549,7 +574,7 @@ H.test(":AgentMode config is a vim.ui.select menu that comes back after each cha
   H.truthy(vim.wait(2000, function() return #script == 0 end), "the menu did not come back after each change")
   vim.ui.select, vim.ui.input = select, input
   package.loaded.snacks, package.preload.snacks = snacks, nil
-  H.contains(table.concat(menus[1], "\n"), "Agent          pi")
+  H.contains(table.concat(menus[1], "\n"), "Agent              pi")
   H.eq("claude", agent_mode.config.agent)
   H.eq("opus", agent_mode.config.model)
   H.eq("max", agent_mode.config.thinking)
@@ -572,7 +597,7 @@ H.test("files the agent changed on disk are reloaded, unless they have unsaved c
   local here = H.buffer({ "x" }, "lua")
   -- The "agent" rewrites both files, then answers.
   local script = string.format(
-    "sleep 1.1; echo 'local new = 2' > %s; echo 'local theirs = 2' > %s; printf '%%s' '{\"actions\":[{\"type\":\"message\",\"text\":\"ok\"}]}'",
+    "sleep 1.1; echo 'local new = 2' > %s; echo 'local theirs = 2' > %s; echo done",
     other, dirty
   )
   agent_mode.setup({ keymap = false, session = { enabled = false }, agent = function()
@@ -583,101 +608,6 @@ H.test("files the agent changed on disk are reloaded, unless they have unsaved c
   H.eq({ "local mine = 1" }, H.lines(dirty_buf), "unsaved changes kept")
   agent_mode.dismiss(true)
   vim.cmd("bwipeout! " .. other_buf .. " " .. dirty_buf)
-end)
-
-H.test("with the session on, it logs the request, tool calls, Lua and the answer, and nothing shows inline", function()
-  local buf = H.buffer({ "local a = 1", "local b = 2" }, "lua")
-  local code_win = vim.api.nvim_get_current_win()
-  local function pi_events(text, tool)
-    local events = {}
-    if tool then
-      events[#events + 1] = vim.json.encode({ type = "tool_execution_start", toolCallId = "c1", toolName = "grep", args = { pattern = tool } })
-      events[#events + 1] = vim.json.encode({
-        type = "tool_execution_end",
-        toolCallId = "c1",
-        toolName = "grep",
-        result = { content = { { type = "text", text = "a.lua:1: local a = 1\na.lua:2: local b = 2" } } },
-        durationMs = 34,
-      })
-    end
-    events[#events + 1] = vim.json.encode({
-      type = "message_end",
-      message = { role = "assistant", content = { { type = "text", text = text } } },
-    })
-    return table.concat(events, "\n") .. "\n"
-  end
-  local replies = {
-    pi_events('{"summary":"Looking up a","actions":[{"type":"lua","code":"return 40 + 2"}]}', "local a"),
-    pi_events('{"actions":[{"type":"message","text":"`a` is **1**."}]}'),
-  }
-  local turn = 0
-  agent_mode.setup({
-    keymap = false,
-    luamode = "allow",
-    session = { enabled = false, split = { enabled = true, position = "right", width = 50 } },
-    agent = function()
-      turn = turn + 1
-      return { argv = { H.root .. "/tests/fake_agent.sh", replies[turn], "0" }, stdin = "", output = "pi-json" }
-    end,
-  })
-  vim.wait(100)
-  H.eq(nil, H.run_agent("what is a?", { bufnr = buf, position = { row = 1, col = 6 } }))
-  local view = require("agent_mode.session")
-  local text = table.concat(view.lines(), "\n")
-  H.contains(text, "▍ what is a?")
-  H.contains(text, "✓ grep 34ms  local a", "the tool call, with its full pattern")
-  H.contains(text, "│ a.lua:2: local b = 2", "and all of its output, folded")
-  H.contains(text, "Looking up a")
-  H.contains(text, "return 40 + 2")
-  H.contains(text, "│ returned:")
-  H.contains(text, "  agent\n  a is 1.", "the answer, as Markdown")
-  H.truthy(text:find("✓ agent · [%d.]+s"), "the request's end is logged")
-  local win = view.win()
-  H.truthy(win, "the session is open in a split")
-  H.eq(50, vim.api.nvim_win_get_width(win))
-  H.eq(code_win, vim.api.nvim_get_current_win(), "the cursor stays in the code")
-  H.eq(0, #vim.api.nvim_buf_get_extmarks(buf, -1, 0, -1, { details = true, type = "virt_lines" }), "no inline answer")
-  -- Pinned: it opens in every tab while it is showing.
-  vim.cmd("tabnew")
-  vim.wait(200, function() return view.win() ~= nil end)
-  H.truthy(view.win(), "the session follows to a new tab")
-  -- Closing the last other window in a tab closes the tab with it.
-  local tabs = #vim.api.nvim_list_tabpages()
-  local splits = vim.tbl_filter(function(w)
-    return vim.api.nvim_win_get_config(w).relative == ""
-  end, vim.api.nvim_tabpage_list_wins(0))
-  H.eq(3, #splits, "the new tab has its window, the session's log and the input's room")
-  H.truthy(view.input_win(), "the session's input floats at the bottom")
-  local other = vim.tbl_filter(function(w)
-    return vim.bo[vim.api.nvim_win_get_buf(w)].filetype:match("^agentmode") == nil
-  end, splits)[1]
-  vim.api.nvim_win_close(other, false)
-  H.truthy(vim.wait(500, function() return #vim.api.nvim_list_tabpages() == tabs - 1 end), "the tab left with only the session closes")
-  -- :only elsewhere does not take it away; files never open in it.
-  vim.api.nvim_set_current_win(code_win)
-  vim.cmd("only")
-  H.truthy(vim.wait(500, function() return view.win() ~= nil end), "the session comes back after :only")
-  vim.api.nvim_set_current_win(view.win())
-  H.truthy(not pcall(vim.cmd, "enew"), "a file cannot replace the session in its window")
-  -- :q in it hides it, like q.
-  vim.cmd("quit")
-  H.truthy(vim.wait(500, function() return view.win() == nil end), ":q in the session hides it")
-  H.truthy(vim.api.nvim_win_is_valid(code_win), "and leaves the code")
-  agent_mode.toggle_session()
-  H.truthy(view.win(), "it shows again")
-  -- A message typed in the sidebar's input asks about the code window's cursor.
-  vim.api.nvim_set_current_win(code_win)
-  vim.api.nvim_win_set_cursor(code_win, { 2, 0 })
-  vim.api.nvim_set_current_win(view.input_win())
-  vim.api.nvim_buf_set_lines(view.input_buf(), 0, -1, false, { "and what is b?" })
-  turn = 0
-  view.submit()
-  H.eq({ "" }, vim.api.nvim_buf_get_lines(view.input_buf(), 0, -1, false), "the input empties")
-  H.truthy(vim.wait(5000, function() return agent_mode.last and agent_mode.last.instruction == "and what is b?" and #agent_mode.requests() == 0 end), "sent from the sidebar")
-  H.contains(agent_mode.last.prompt, "Cursor: line 2")
-  agent_mode.toggle_session()
-  H.eq(nil, view.win(), ":AgentMode session hides it")
-  agent_mode.configure({ session = { split = { enabled = false } } })
 end)
 
 H.test("an answer taller than the window shows what fits and how to read the rest", function()
@@ -700,26 +630,16 @@ H.test("an answer taller than the window shows what fits and how to read the res
   agent_mode.dismiss(true)
 end)
 
-H.test("lua results go back to the agent until it answers", function()
-  local buf = H.buffer({ "local a = 1" }, "lua")
-  local prompts = scripted_agent({
-    { summary = "Looking", actions = { { type = "lua", code = "return { line = ctx.row, n = 41 + 1 }" } } },
-    { actions = { { type = "message", text = "it is 42" } } },
-  })
-  H.eq(nil, H.run_agent("what is it?", { position = { row = 1, col = 0 } }))
-  H.eq(2, #prompts)
-  H.contains(prompts[1], "Neovim: Neovim 0.")
-  H.contains(prompts[2], "Your reply 1:", "without a session, the transcript is resent")
-  H.contains(prompts[2], "Result of lua action 1:\nreturned:\n{\n  line = 1,\n  n = 42\n}")
-  H.contains(prompts[2], "step 2 of at most 8). Reply with exactly one JSON object")
-  agent_mode.dismiss(true)
-end)
-
-H.test("a request stops after max_turns rounds of lua", function()
+H.test("run_lua returns what the code returned to the agent", function()
   H.buffer({ "local a = 1" }, "lua")
-  local prompts = scripted_agent({ { actions = { { type = "lua", code = "return 1" } } } }, { max_turns = 3 })
-  H.contains(H.run_agent("loop", { position = { row = 1, col = 0 } }), "used all 3 steps")
-  H.eq(3, #prompts)
+  fake_agent({ actions = {
+    { type = "lua", code = "return { line = ctx.row, n = 41 + 1 }" },
+    { type = "message", text = "it is 42" },
+  } }, 0, { luamode = "allow" })
+  H.eq(nil, H.run_agent("what is it?", { position = { row = 1, col = 0 } }))
+  H.contains(sent_prompt(), "Neovim: Neovim 0.")
+  H.contains(tool_results(), "returned:\n{\n  line = 1,\n  n = 42\n}")
+  agent_mode.dismiss(true)
 end)
 
 H.test("with luamode = confirm, declining tells the agent; with luamode off, it is not offered", function()
@@ -729,23 +649,58 @@ H.test("with luamode = confirm, declining tells the agent; with luamode off, it 
   run_lua.confirm = function(_, _, on_choice)
     vim.schedule(function() on_choice("skip") end)
   end
-  local prompts = scripted_agent({
-    { actions = { { type = "lua", code = "vim.g.ran = true" } } },
-    { actions = { { type = "message", text = "ok" } } },
-  }, { luamode = "confirm" })
+  fake_agent({ actions = {
+    { type = "lua", code = "vim.g.ran = true" },
+    { type = "message", text = "ok" },
+  } }, 0, { luamode = "confirm" })
   H.eq(nil, H.run_agent("try", { position = { row = 1, col = 0 } }))
   run_lua.confirm = confirm
   H.eq(nil, vim.g.ran)
-  H.contains(prompts[2], "the user declined to run this code")
+  H.contains(tool_results(), "the user declined to run this code")
   agent_mode.dismiss(true)
 
   local seen
   agent_mode.setup({ keymap = false, luamode = false, agent = function(request)
     seen = request.system_prompt
-    return { argv = { H.root .. "/tests/fake_agent.sh", '{"actions":[{"type":"lua","code":"return 1"}]}', "0" }, stdin = "" }
+    return fake_command(request, { actions = { { type = "lua", code = "return 1" } } })
   end })
-  H.contains(H.run_agent("try", { position = { row = 1, col = 0 } }), "`luamode` is off")
-  H.truthy(not seen:find('"type": "lua"', 1, true), "lua offered while off")
+  H.run_agent("try", { position = { row = 1, col = 0 } })
+  H.contains(tool_results(), "ERROR the user does not allow Lua")
+  H.truthy(not seen:find("run_lua", 1, true), "Lua offered while off")
+end)
+
+H.test("an attached agent takes requests through wait_for_request, instead of a new one", function()
+  local buf = H.buffer({ "local a = 1" }, "lua")
+  local started = false
+  agent_mode.setup({ keymap = false, agent = function()
+    started = true
+    error("no agent should start while one is attached")
+  end })
+  local mcp = { command = agent_mode.mcp_server, args = { "--server", vim.v.servername } }
+  local exited = false
+  vim.system({ "nvim", "--clean", "--headless", "-l", H.root .. "/tests/fake_agent.lua" }, {
+    stdin = "",
+    env = {
+      AGENT_MODE_FAKE_MCP = vim.json.encode(mcp),
+      AGENT_MODE_FAKE_RESULTS = results_file,
+      AGENT_MODE_FAKE_CALLS = vim.json.encode({
+        { name = "wait_for_request", arguments = { timeout_seconds = 20 } },
+        { name = "show_answer", arguments = { context_id = "@ID@", text = "a is 1, from the attached agent." } },
+        { name = "finish", arguments = { context_id = "@ID@" } },
+      }),
+    },
+  }, function()
+    exited = true
+  end)
+  H.truthy(vim.wait(10000, agent_mode.attached, 20), "the agent attached")
+  H.eq(nil, H.run_agent("what is a?", { position = { row = 1, col = 6 } }))
+  H.eq(false, started)
+  H.contains(table.concat(require("agent_mode.answer").list(buf)[1].lines, "\n"), "from the attached agent")
+  -- vim.wait, not :wait(): the agent's calls need Neovim's loop to answer.
+  H.truthy(vim.wait(10000, function() return exited end, 20), "the agent finished")
+  H.contains(tool_results(), "Instruction: what is a?")
+  agent_mode.new_session()
+  agent_mode.dismiss(true)
 end)
 
 H.run()

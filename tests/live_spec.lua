@@ -35,9 +35,7 @@ end, live)) do
   end)
 end
 
-for _, agent in ipairs(vim.tbl_filter(function(a)
-  return a ~= "codex" and a ~= "opencode"
-end, live)) do
+for _, agent in ipairs(live) do
   H.test(agent .. ": a question is answered inline and the code is left alone", function()
     local opts = { agent = agent, keymap = false }
     if agent == "axo" then
@@ -77,7 +75,9 @@ if vim.tbl_contains(live, "pi") and vim.fn.executable(luals) == 1 then
     vim.wait(1500)
     local err = H.run_agent("rename to presenter", { bufnr = buf, position = { row = 1, col = 6 } }, 120000)
     H.eq(nil, err)
-    H.eq("lsp_rename", agent_mode.last.response.actions[1].type)
+    H.truthy(vim.iter(agent_mode.last.tools or {}):any(function(call)
+      return call.name == "lsp_rename" and not call.error
+    end), "renamed through the language server: " .. vim.inspect(agent_mode.last.tools))
     H.eq({ "local presenter = 'hi'", "print(presenter)" }, H.lines(buf))
   end)
 end

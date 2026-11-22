@@ -2,7 +2,7 @@
 --
 -- An agent is a function that turns a request into a command:
 --
---   agent(request) -> { argv = { ... }, stdin = "...", output = "text"|"pi-json" }
+--   agent(request) -> { argv = { ... }, stdin = "...", env = { ... } }
 --
 -- where request is
 --
@@ -15,141 +15,23 @@
 --     session = { id = string|nil, started = boolean }|nil,
 --                               -- the conversation to continue; nil runs
 --                               -- without one
+--     mcp = { command, args, server, pi_extension },
+--                               -- agent-mode's MCP server for this Neovim
+--                               -- (command and args start it), and pi's
+--                               -- extension that registers it
 --   }
 --
 -- With a session, the command may set `session_id` (the id it uses, when it
 -- picks one) or `read_session_id(result)` (to read it from the finished
 -- process); agent-mode keeps it for the next request.
 --
--- With output = "text" (the default) the command must print the agent's final
--- reply, and nothing else, on stdout. With "pi-json" it prints pi's JSON event
--- stream, which lets agent-mode show the agent's thinking and tools as they
--- happen.
---
--- Agents get their usual tools (pi adds codemode), so they can look around
--- the project and change other files themselves. Changes to the buffer the
--- request came from come back as actions, since it may have unsaved edits;
--- agent-mode reloads other open buffers whose files the agent changed, and
--- what needs Neovim itself goes through the "lua" action.
+-- The agent works in Neovim through agent-mode's MCP tools (edit,
+-- show_answer, run_lua, ...); what it prints on stdout at the end is shown
+-- as the answer when it did not use them. Agents also get their usual tools
+-- (pi adds codemode), so they can look around the project and change other
+-- files themselves; agent-mode reloads open buffers whose files changed.
 
 local M = {}
-
---- Output decoders turn an agent's stdout, chunk by chunk, into progress
---- events and, at the end, the reply text.
----   decoder.feed(chunk) -> { { kind = "thinking"|"text"|"tool", delta = string }, ... }
----     ("tool" events name the tool the agent just started, and replace
----     the one before; they and "tool_end" events carry the call:
----     { id, name, args } and { id, name, output, error, ms })
----   decoder.reply()     -> string
-M.decoders = {}
-
-function M.decoders.text()
-  local chunks = {}
-  return {
-    feed = function(chunk)
-      chunks[#chunks + 1] = chunk
-      return { { kind = "text", delta = chunk } }
-    end,
-    reply = function()
-      return table.concat(chunks)
-    end,
-  }
-end
-
-local function message_text(message)
-  local parts = {}
-  for _, block in ipairs(type(message.content) == "table" and message.content or {}) do
-    if block.type == "text" and type(block.text) == "string" then
-      parts[#parts + 1] = block.text
-    end
-  end
-  return table.concat(parts)
-end
-
---- A few words on what a tool call is doing, for the status by the line.
-function M.describe_tool(name, args)
-  args = type(args) == "table" and args or {}
-  local detail = args.path or args.pattern or args.command or args.query
-  if not detail and type(args.code) == "string" then
-    -- codemode: its first line of code that says something
-    for line in args.code:gmatch("[^\n]+") do
-      if not line:match("^%s*//") and not line:match("^%s*$") then
-        detail = vim.trim(line)
-        break
-      end
-    end
-  end
-  if type(detail) ~= "string" or detail == "" then
-    return name
-  end
-  detail = detail:gsub("%s+", " ")
-  if vim.fn.strchars(detail) > 40 then
-    detail = vim.fn.strcharpart(detail, 0, 39) .. "…"
-  end
-  return name .. " " .. detail
-end
-
---- pi --mode json: one JSON event per line.
-M.decoders["pi-json"] = function()
-  local pending = ""
-  local streamed = {}
-  local final = nil
-  return {
-    feed = function(chunk)
-      local events = {}
-      pending = pending .. chunk
-      -- Split complete lines with plain finds: patterns like "[^\n]*$" are
-      -- quadratic on long lines, and pi's events carry whole prompts.
-      local start = 1
-      while true do
-        local newline = pending:find("\n", start, true)
-        if not newline then
-          break
-        end
-        local line = pending:sub(start, newline - 1)
-        start = newline + 1
-        local ok, event = pcall(vim.json.decode, line)
-        if ok and type(event) == "table" then
-          local update = event.assistantMessageEvent
-          if event.type == "message_update" and type(update) == "table" and type(update.delta) == "string" then
-            if update.type == "thinking_delta" then
-              events[#events + 1] = { kind = "thinking", delta = update.delta }
-            elseif update.type == "text_delta" then
-              streamed[#streamed + 1] = update.delta
-              events[#events + 1] = { kind = "text", delta = update.delta }
-            end
-          elseif event.type == "tool_execution_start" and type(event.toolName) == "string" then
-            events[#events + 1] = {
-              kind = "tool",
-              delta = M.describe_tool(event.toolName, event.args),
-              call = { id = event.toolCallId, name = event.toolName, args = event.args },
-            }
-          elseif event.type == "tool_execution_end" and type(event.toolName) == "string" then
-            local result = type(event.result) == "table" and message_text(event.result) or ""
-            events[#events + 1] = {
-              kind = "tool_end",
-              delta = "",
-              call = {
-                id = event.toolCallId,
-                name = event.toolName,
-                output = result,
-                error = event.isError == true,
-                ms = type(event.durationMs) == "number" and event.durationMs or nil,
-              },
-            }
-          elseif event.type == "message_end" and type(event.message) == "table" and event.message.role == "assistant" then
-            final = message_text(event.message)
-          end
-        end
-      end
-      pending = pending:sub(start)
-      return events
-    end,
-    reply = function()
-      return final or table.concat(streamed)
-    end,
-  }
-end
 
 --- Some agents take their system prompt as a file: pi kills itself when an
 --- argument is longer than about 1 KB with some extensions loaded.
@@ -169,7 +51,7 @@ end
 M.uuid = uuid
 
 --- pi (https://pi.dev). Takes the system prompt as a file and the request on
---- stdin. The prompt goes through a file because some pi extensions kill the
+--- stdin, and agent-mode's MCP server through pi/agent-mode.ts. The prompt goes through a file because some pi extensions kill the
 --- process when an argument is longer than about 1 KB. --session-id creates
 --- the session the first time and continues it after.
 function M.pi(request)
@@ -177,13 +59,12 @@ function M.pi(request)
   local argv = {
     "pi",
     "--print",
-    "--mode",
-    "json",
     "--tools",
     "+codemode",
     "--no-context-files",
     "--no-skills",
-    "--no-mcp",
+    "--extension",
+    request.mcp.pi_extension,
     "--thinking",
     request.thinking or "off",
   }
@@ -197,7 +78,13 @@ function M.pi(request)
   end
   vim.list_extend(argv, request.args)
   vim.list_extend(argv, { "--system-prompt", system_prompt_file(request.system_prompt) })
-  return { argv = argv, stdin = request.prompt, output = "pi-json", session_id = session_id }
+  -- The extension registers agent-mode's MCP server for this Neovim.
+  return {
+    argv = argv,
+    stdin = request.prompt,
+    env = { AGENT_MODE_SERVER = request.mcp.server },
+    session_id = session_id,
+  }
 end
 
 --- OpenAI Codex CLI. It has no system prompt flag, so the system prompt
@@ -218,6 +105,15 @@ function M.codex(request)
     end
   end
   vim.list_extend(argv, { "-c", string.format("model_reasoning_effort=%q", request.thinking or "low") })
+  vim.list_extend(argv, {
+    "-c",
+    string.format("mcp_servers.agent_mode.command=%q", request.mcp.command),
+    "-c",
+    string.format("mcp_servers.agent_mode.args=%s", vim.json.encode(request.mcp.args)),
+    -- exec cannot ask, so agent-mode's own tools are approved up front.
+    "-c",
+    'mcp_servers.agent_mode.default_tools_approval_mode="approve"',
+  })
   if request.model then
     vim.list_extend(argv, { "-c", string.format("model=%q", request.model) })
   end
@@ -237,15 +133,31 @@ function M.codex(request)
 end
 
 --- Claude Code. Its usual tools with file edits allowed (commands that
---- need permission are refused, since nobody can answer in --print), no MCP
---- servers; the system prompt goes in a file
+--- need permission are refused, since nobody can answer in --print), and of
+--- MCP servers only agent-mode's, its tools allowed; the system prompt goes
+--- in a file
 --- and the request on stdin. `thinking` is passed as --effort (low, medium,
 --- high, xhigh, max). A session starts with --session-id and continues with
 --- --resume, since --session-id refuses an id that exists.
 function M.claude(request)
   local session = request.session
   local session_id = session and (session.id or uuid())
-  local argv = { "claude", "--print", "--output-format", "text", "--permission-mode", "acceptEdits", "--strict-mcp-config" }
+  local mcp_config = vim.json.encode({
+    mcpServers = { ["agent-mode"] = { command = request.mcp.command, args = request.mcp.args } },
+  })
+  local argv = {
+    "claude",
+    "--print",
+    "--output-format",
+    "text",
+    "--permission-mode",
+    "acceptEdits",
+    "--mcp-config",
+    mcp_config,
+    "--strict-mcp-config",
+    "--allowedTools",
+    "mcp__agent-mode",
+  }
   if not session then
     argv[#argv + 1] = "--no-session-persistence"
   elseif session.started then
@@ -265,13 +177,15 @@ function M.claude(request)
 end
 
 --- OpenCode, with its default agent and its permissions auto-approved, since
---- nobody can answer a prompt. It has no system prompt flag, so the system
+--- nobody can answer a prompt, and agent-mode's MCP server in its inline
+--- config. --standalone runs it on a private server: the shared background
+--- service would not see that config, which comes in the environment. It has no system prompt flag, so the system
 --- prompt leads the request on stdin. `model` is OpenCode's provider/model.
 --- --session creates the session the first time and continues it after; its
 --- ids look like ses_<26 characters>.
 function M.opencode(request)
   local session_id = request.session and (request.session.id or ("ses_" .. uuid():gsub("%-", ""):sub(1, 26)))
-  local argv = { "opencode", "run", "--auto" }
+  local argv = { "opencode", "run", "--standalone", "--auto" }
   if session_id then
     vim.list_extend(argv, { "--session", session_id })
   end
@@ -279,7 +193,21 @@ function M.opencode(request)
     vim.list_extend(argv, { "--model", request.model })
   end
   vim.list_extend(argv, request.args)
-  return { argv = argv, stdin = request.system_prompt .. "\n\n---\n\n" .. request.prompt, session_id = session_id }
+  local config = vim.json.encode({
+    mcp = {
+      ["agent-mode"] = {
+        type = "local",
+        command = vim.list_extend({ request.mcp.command }, request.mcp.args),
+        enabled = true,
+      },
+    },
+  })
+  return {
+    argv = argv,
+    stdin = request.system_prompt .. "\n\n---\n\n" .. request.prompt,
+    env = { OPENCODE_CONFIG_CONTENT = config },
+    session_id = session_id,
+  }
 end
 
 --- The preset names, for completion and errors.

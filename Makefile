@@ -1,18 +1,14 @@
 .PHONY: test test-live typecheck deps
 
-# The plugins agent-mode uses, for the tests: in .deps/, or set NUI to a
-# checkout you already have.
-NUI ?= .deps/nui.nvim
+# The plugins agent-mode uses, for the tests: in .deps/, or set SNACKS to
+# a checkout you already have.
 SNACKS ?= .deps/snacks.nvim
-deps: $(NUI) $(SNACKS)
-$(NUI):
-	git clone --quiet --depth 1 https://github.com/MunifTanjim/nui.nvim $(NUI)
+deps: $(SNACKS)
 $(SNACKS):
 	git clone --quiet --depth 1 https://github.com/folke/snacks.nvim $(SNACKS)
 
 # Unit and integration tests. The language server tests run when
 # lua-language-server is on PATH or installed by mason.
-export AGENT_MODE_NUI = $(abspath $(NUI))
 export AGENT_MODE_SNACKS = $(abspath $(SNACKS))
 test: deps
 	nvim --headless -l tests/unit_spec.lua

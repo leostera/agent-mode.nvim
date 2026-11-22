@@ -67,15 +67,15 @@ local subcommands = {
     end,
   },
   new = {
-    desc = "start a new session with the agent",
+    desc = "start a new session, and let an attached agent go",
     run = function()
       require("agent_mode").new_session()
     end,
   },
-  session = {
-    desc = "show or hide the session split (turns it on)",
+  attach = {
+    desc = "how to attach an agent you run yourself (through agent-mode's MCP server)",
     run = function()
-      require("agent_mode").toggle_session()
+      require("agent_mode").attach()
     end,
   },
   log = {
@@ -102,7 +102,7 @@ vim.api.nvim_create_user_command("AgentMode", function(opts)
 end, {
   nargs = "*",
   bang = true,
-  desc = "agent-mode: ask the agent, or :AgentMode {ask|cancel|dismiss|agent|config|new|session|log}",
+  desc = "agent-mode: ask the agent, or :AgentMode {ask|cancel|dismiss|agent|config|new|attach|log}",
   complete = function(lead, line)
     local words = vim.split(line:gsub("^%S+%s*", ""), "%s+")
     if #words <= 1 then

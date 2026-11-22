@@ -12,7 +12,7 @@ CONTENTS                                                 *agent-mode-contents*
   7. Lua in Neovim .............................. |agent-mode-lua|
   8. Lua API .................................... |agent-mode-api|
   9. Highlights ................................. |agent-mode-highlights|
- 10. Session split .................................. |agent-mode-session|
+ 10. Attached agents .............................. |agent-mode-attach|
 
 ==============================================================================
 1. INTRODUCTION                                             *agent-mode-intro*
@@ -90,13 +90,14 @@ Change them with `answer_keymaps`.
                         Lua. Drawn by snacks.nvim when installed, else
                         |vim.ui.select|.
 
-:AgentMode new          Start a new session with the agent.
+:AgentMode new          Start a new session with the agent, and let go of
+                        an attached agent.
 
-:AgentMode session      Show or hide the session split; the first time,
-                        turn it on. |agent-mode-session|
+:AgentMode attach       Show how to attach an agent you run yourself, and
+                        copy what to tell it. |agent-mode-attach|
 
 :AgentMode log          Show the last request's prompt, command, session
-                        and reply.
+                        and output.
 
 ==============================================================================
 5. SETTINGS                                              *agent-mode-settings*
@@ -122,10 +123,10 @@ reported by |:checkhealth|. Defaults:
       code_action_timeout_ms = 1000,
       luamode = "confirm",     -- the agent's Lua: "confirm", "allow", false
       luamode_timeout_ms = 10000, -- for Lua that waits (ctx.async)
-      max_turns = 8,           -- replies per request
       session = {
         enabled = true,        -- one agent session per Neovim
-        split = { enabled = false, position = "right", width = 64 },
+        mode = "start",        -- no agent attached: "start" one,
+                               -- "attach" (wait for one), or "ask"
       },
       axo = { session = "self", cmd = "axo" },
     }
@@ -135,26 +136,30 @@ reported by |:checkhealth|. Defaults:
 ==============================================================================
 6. AGENTS                                                  *agent-mode-agents*
 
-Each request runs the agent's CLI with its usual tools, continuing the same
-session. The buffer you asked from changes only through the agent's reply,
-since it may have unsaved edits; other open files the agent changes are
-reloaded, unless they have unsaved changes.
+Each request runs the agent's CLI with its usual tools and agent-mode's MCP
+server, continuing the same session. The buffer you asked from changes only
+through agent-mode's tools, since it may have unsaved edits; other open
+files the agent changes are reloaded, unless they have unsaved changes.
 
   agent       runs                                      thinking
   "claude"    claude --print --permission-mode           low ... max
-              acceptEdits
+              acceptEdits --mcp-config ...
   "codex"     codex exec --sandbox workspace-write       minimal ... high
-  "opencode"  opencode run --auto                        n/a
+              -c mcp_servers.agent_mode...
+  "opencode"  opencode run --standalone --auto           n/a
   "pi"        pi --print --tools +codemode               off ... xhigh
+              --extension pi/agent-mode.ts
 
 A custom agent is a function from a request to a command: >lua
 
     agent = function(request)
-      -- request: system_prompt, prompt, model, thinking, args, session
-      return { argv = { "my-agent" }, stdin = request.prompt }
+      -- request: system_prompt, prompt, model, thinking, args, session,
+      -- mcp = { command, args }: agent-mode's MCP server for this Neovim
+      return { argv = { "my-agent" }, stdin = request.prompt, env = {} }
     end
 <
-It must print the reply, one JSON object, on stdout.
+The agent works through the MCP tools (see |agent-mode-attach|); when it
+uses none, what it prints on stdout is shown as the answer.
 
 "axo" hands requests to an Axo Session's agent, which edits files itself;
 agent-mode reloads the buffer afterwards.
@@ -163,8 +168,8 @@ agent-mode reloads the buffer afterwards.
 7. LUA IN NEOVIM                                              *agent-mode-lua*
 
 For what only Neovim has (language servers, unsaved buffers, windows,
-plugins), the agent can send Lua that agent-mode runs; what it returns goes
-back to the agent for its next step. By default you see the code first:
+plugins), the agent can send Lua to the run_lua tool; what it returns goes
+back to the agent as the tool's result. By default you see the code first:
 `y` runs it, `a` runs it and the rest of the request's Lua, `n` skips it.
 The code runs with your editor's permissions.
 
@@ -192,7 +197,14 @@ require("agent_mode").prompt()                           *agent_mode.prompt()*
     Open the prompt, as |<Plug>(AgentMode)| does.
 
 require("agent_mode").new_session()                 *agent_mode.new_session()*
-    Start a new session.
+    Start a new session, and let go of an attached agent.
+
+require("agent_mode").attach()                           *agent_mode.attach()*
+    Show how to attach an agent, as `:AgentMode attach` does.
+
+require("agent_mode").attached()                       *agent_mode.attached()*
+    Whether an agent is attached: listening, working, or seen in the last
+    15 seconds.
 
 ==============================================================================
 9. HIGHLIGHTS                                          *agent-mode-highlights*
@@ -200,28 +212,32 @@ require("agent_mode").new_session()                 *agent_mode.new_session()*
 AgentModeAnswer, AgentModeAnswerBorder, AgentModeAnswerTitle    answers
 AgentModeInput, AgentModeInputBorder, AgentModeInputTitle       the prompt
 AgentModeLuaBorder, AgentModeLuaTitle                     the Lua confirmation
-AgentModeSessionYou, AgentModeSessionYouBar, AgentModeSessionYouName,
-AgentModeSessionTool, AgentModeSessionToolName, AgentModeSessionOk,
-AgentModeSessionError, AgentModeSessionRunning, AgentModeSessionDim,
-AgentModeSessionFold, AgentModeSessionAgent, AgentModeSessionSummary
-                                                     the session split
 
 ==============================================================================
-10. SESSION SPLIT                                         *agent-mode-session*
+10. ATTACHED AGENTS                                        *agent-mode-attach*
 
-With `session.split.enabled`, a split on the `session.split.position` side
-logs every request: what you asked and where, each tool call with its full
-command and duration, its Lua and what came back, edits, reloaded files, and
-its answers, in Markdown. Tool output is folded under each call: <CR> or <Tab> opens or
-closes it, q hides the split. The input box at the bottom sends a message
-with <CR> (<C-j> starts a new line), about the cursor in the code window you
-were in last. You can still ask inline and the line shows the agent's status,
-but answers go to the session. The split follows new entries
-unless you scroll up.
+An agent you run yourself (in another terminal, tmux, anywhere) can take
+your requests too. agent-mode's MCP server, `bin/agent-mode-mcp`, gives it
+these tools, each on a request's `context_id`:
 
-The split is pinned: it shows in every tab while it is open, and a tab left
-with only the session in it closes (or Neovim quits, as with |:quit|, when
-it is the last tab). It is the buffer `agent-mode://session`, with
-'filetype' agentmode, drawn with nui.nvim.
+  wait_for_request   wait for the next request made at the cursor
+  get_context        the buffer, cursor and language server state now
+  edit               line edits to the buffer, refused if the lines changed
+  lsp_rename         rename the symbol at the cursor
+  code_action        run one of the listed code actions
+  show_answer        Markdown under the user's line
+  run_lua            Lua in Neovim, under `luamode`
+  set_status         a few words next to the line
+  finish             end the request
+
+Add the server to your agent once (`:AgentMode attach` shows the commands
+with paths filled in), start it in your project's folder, and tell it to
+call wait_for_request in a loop. While it listens, requests go to it.
+The server finds Neovim by `--server`, `$AGENT_MODE_SERVER`, `$NVIM`, or
+the Neovim whose working directory is closest to its own (each Neovim
+registers itself under `stdpath("state")/agent-mode/servers`).
+
+With no agent attached, `session.mode` decides: "start" starts your agent,
+"attach" waits for one and shows how to attach it, "ask" asks each time.
 
  vim:tw=78:ts=8:noet:ft=help:norl:

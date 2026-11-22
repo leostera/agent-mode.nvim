@@ -237,24 +237,28 @@ local function entries()
     end,
   }
   list[#list + 1] = {
-    label = "Session split",
-    value = config.session.split.enabled and ("on, " .. config.session.split.position) or "off (answers inline)",
+    label = "No agent attached",
+    value = ({ start = "start one", attach = "wait for one", ask = "ask" })[config.session.mode],
     change = function(done)
-      local choices = { { "off (answers inline)", false }, { "on, right", "right" }, { "on, left", "left" } }
+      local choices = { { "start one", "start" }, { "wait for one to attach", "attach" }, { "ask each time", "ask" } }
       select(choices, {
-        prompt = "Session split",
+        prompt = "When no agent is attached, a request",
         format_item = function(item)
           return item[1]
         end,
       }, function(choice)
         if choice then
-          local split = vim.deepcopy(config.session.split)
-          split.enabled = choice[2] ~= false
-          split.position = choice[2] or split.position
-          set({ session = { split = split } })
+          set({ session = { mode = choice[2] } })
         end
         done()
       end)
+    end,
+  }
+  list[#list + 1] = {
+    label = "Attach an agent",
+    value = agent_mode().attached() and "attached now" or "how to",
+    change = function()
+      agent_mode().attach() -- closes the menu: the instructions take its place
     end,
   }
   local current = agent_mode().session()

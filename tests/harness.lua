@@ -3,7 +3,7 @@
 
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 vim.opt.rtp:prepend(root)
-for _, dep in ipairs({ vim.env.AGENT_MODE_NUI, vim.env.AGENT_MODE_SNACKS }) do
+for _, dep in ipairs({ vim.env.AGENT_MODE_SNACKS }) do
   if dep then
     vim.opt.rtp:append(dep)
   end

@@ -57,8 +57,7 @@ agent-mode when you want a quick answer or change at the line you are on.
 
 Requires Neovim 0.12+ and one of the agent CLIs below, installed and logged in.
 It uses [snacks.nvim](https://github.com/folke/snacks.nvim) for the prompt and
-the settings menu, and [nui.nvim](https://github.com/MunifTanjim/nui.nvim) for
-the session split; lazy.nvim installs both for you.
+the settings menu; lazy.nvim installs it for you.
 
 With [lazy.nvim](https://github.com/folke/lazy.nvim):
 
@@ -88,20 +87,21 @@ agent_mode` checks your setup, and `:h agent-mode` has the full docs.
 ## Pick your agent
 
 agent-mode runs your agent's CLI once per request with its usual tools (pi
-also gets codemode), so it can read, search, and change your project. The
-buffer you asked from changes only through the agent's reply, which
-agent-mode applies as one undo step, since it may have unsaved edits; other
-open files the agent changes are reloaded for you. Each run continues the same
+also gets codemode), so it can read, search, and change your project, plus
+agent-mode's own tools for working in your Neovim (served over MCP). The
+buffer you asked from changes only through those tools, as one undo step,
+since it may have unsaved edits; other open files the agent changes are
+reloaded for you. Each run continues the same
 session, so the agent remembers earlier requests (see
 [One session per Neovim](#one-session-per-neovim)). Your agent's own
 login, model access, and billing are used as they are.
 
 | Agent | `agent =` | How it runs | `thinking` |
 | --- | --- | --- | --- |
-| [Claude Code](https://docs.anthropic.com/claude-code) | `"claude"` | `claude --print --permission-mode acceptEdits`, `--session-id`/`--resume`, no MCP servers | `--effort`: `low` … `max` |
+| [Claude Code](https://docs.anthropic.com/claude-code) | `"claude"` | `claude --print --permission-mode acceptEdits`, `--session-id`/`--resume`, only agent-mode's MCP server | `--effort`: `low` … `max` |
 | [Codex](https://github.com/openai/codex) | `"codex"` | `codex exec --sandbox workspace-write`, then `codex exec resume <id>` | `model_reasoning_effort`: `minimal` … `high` (default `low`) |
-| [OpenCode](https://opencode.ai) | `"opencode"` | `opencode run --auto --session <id>` | n/a |
-| [pi](https://pi.dev) | `"pi"` | `pi --print --tools +codemode --session-id <id>` | `off` … `xhigh` (default `off`) |
+| [OpenCode](https://opencode.ai) | `"opencode"` | `opencode run --standalone --auto --session <id>` | n/a |
+| [pi](https://pi.dev) | `"pi"` | `pi --print --tools +codemode --extension pi/agent-mode.ts --session-id <id>` | `off` … `xhigh` (default `off`) |
 | anything else | a function | see [Custom agents](#custom-agents) | |
 
 Choose a model with `model`, in the format your agent expects:
@@ -142,9 +142,11 @@ One command, `:AgentMode`, with completion for its subcommands:
   [snacks.nvim](https://github.com/folke/snacks.nvim)'s picker, so every list
   is fuzzy-searchable (pi's models, for one); without snacks it falls back to
   `vim.ui.select`
-- `:AgentMode new`: start a new session with the agent
-- `:AgentMode session`: show or hide the session split
-- `:AgentMode log`: show the last prompt, command, session, and raw reply
+- `:AgentMode new`: start a new session with the agent, and let go of an
+  attached one
+- `:AgentMode attach`: how to attach an agent you run yourself (see
+  [Use the agent you already have open](#use-the-agent-you-already-have-open))
+- `:AgentMode log`: show the last prompt, command, session, and output
 
 ## One session per Neovim
 
@@ -164,28 +166,41 @@ session run one at a time: a request asked while another is running shows
 don't need each other, `session = { enabled = false }` runs each one on its own and all at
 once, as before.
 
-## The session split, for when a lot is going on
+## Use the agent you already have open
 
-Turn on the session and a split on the right (or left) logs every request as
-it happens: what you asked and where, each tool call the agent makes with its
-full command and how long it took, its Lua and what came back, the edits it
-applied, the files it reloaded, and its answer, in Markdown. Tool output is
-folded under each call; `<CR>` opens it. At the bottom of the split, an input
-box takes follow-ups: `<CR>` sends them about the cursor in the code window
-you were in last. You can still ask inline, right below the cursor, and the
-line still shows what the agent is doing, but answers go to the session
-instead of under the line.
+The agent you work with all day, in Ghostty, tmux, or anywhere else, can take
+your requests too, with everything it already knows about the task. agent-mode
+serves its tools to any agent over MCP: add the server once, then tell the
+agent to listen.
 
-```lua
-vim.g.agent_mode = { session = { split = { enabled = true, position = "right", width = 64 } } }
-```
+1. Add agent-mode's MCP server to your agent (`:AgentMode attach` shows these
+   with the paths filled in):
 
-The split is pinned: it shows in every tab, and a tab left with only the
-session in it closes. `:AgentMode session` shows or hides it (and turns it on
-the first time), and `:AgentMode config` switches it on, off, or to the other
-side. It is drawn with [nui.nvim](https://github.com/MunifTanjim/nui.nvim).
-Tool calls show up live with pi; with the other agents, each step shows when
-it is done.
+   ```sh
+   pi install /path/to/agent-mode.nvim/pi/agent-mode.ts
+   claude mcp add --scope user agent-mode -- /path/to/agent-mode.nvim/bin/agent-mode-mcp
+   codex mcp add agent-mode -- /path/to/agent-mode.nvim/bin/agent-mode-mcp
+   ```
+
+   For OpenCode, add it to `~/.config/opencode/opencode.json`:
+   `"mcp": { "agent-mode": { "type": "local", "command": ["/path/to/agent-mode.nvim/bin/agent-mode-mcp"] } }`.
+
+2. Start the agent in your project's folder and tell it: "Listen to Neovim:
+   call agent-mode's wait_for_request tool, handle each request it returns
+   with agent-mode's tools, and call wait_for_request again after each one,
+   until I say stop." (`:AgentMode attach` copies this for you.)
+
+While it listens, requests you make at your cursor go to it instead of a new
+agent. The server finds your Neovim by the folder the agent runs in (each
+Neovim registers itself in its state folder), or by `$NVIM` inside Neovim's
+terminal. Without the listening loop, the agent can still use the tools when
+you ask it to in its own window: "look at what I have selected in Neovim",
+"rename this with the language server".
+
+When no agent is attached, `session.mode` says what a request does:
+`"start"` (the default) starts your agent as usual, `"attach"` waits for one
+to attach and shows how, and `"ask"` asks each time. `:AgentMode new` lets go
+of the attached agent.
 
 ## Let the agent look around and show you things
 
@@ -201,7 +216,7 @@ split". The agent splits the work:
   a split, or the quickfix list.
 
 What the Lua returns or prints goes back to the agent, which takes another
-step or answers. A request can take up to `max_turns` steps. Asked for the
+step or answers. Asked for the
 call graph of a function, pi searched the project for the callers five
 levels up with its tools, then sent one piece of Lua to open the graph in a
 new tab.
@@ -253,10 +268,9 @@ vim.g.agent_mode = {
   code_action_timeout_ms = 1000,
   luamode = "confirm",     -- let the agent run Lua: "confirm", "allow", or false
   luamode_timeout_ms = 10000, -- how long its asynchronous Lua may take
-  max_turns = 8,           -- replies per request; each round of Lua is one
   session = {
     enabled = true,        -- one agent session for every request from this Neovim
-    split = { enabled = false, position = "right", width = 64 }, -- answers in a side split
+    mode = "start",        -- with no agent attached: "start" one, "attach" (wait), or "ask"
   },
 }
 ```
@@ -279,14 +293,16 @@ window colors by default.
 
 ### Custom agents
 
-`agent` can be a function that turns a request into a command. The command
-must print the reply, and only the reply, on stdout:
+`agent` can be a function that turns a request into a command. Give the
+agent agent-mode's MCP server (`request.mcp.command` with `request.mcp.args`)
+so it can edit and answer; if it does neither, what it prints on stdout is
+shown as the answer:
 
 ```lua
 agent = function(request)
-  -- request: { system_prompt, prompt, model, thinking, args }
+  -- request: { system_prompt, prompt, model, thinking, args, session, mcp }
   return {
-    argv = { "my-agent", "--quiet", "--model", request.model or "fast" },
+    argv = { "my-agent", "--quiet", "--mcp", request.mcp.command .. " " .. table.concat(request.mcp.args, " ") },
     stdin = request.system_prompt .. "\n\n" .. request.prompt,
   }
 end
@@ -297,16 +313,20 @@ end
 1. agent-mode snapshots the buffer, cursor, selection, and diagnostics, and
    asks your language servers whether they can rename here and which code
    actions they offer.
-2. The agent gets all of that with your instruction, and replies with one JSON
-   object: a summary (shown next to the line while it works), and actions:
-   an LSP rename, one of the listed code actions, line edits, an answer, or
-   Lua to run in Neovim, whose result goes back to the agent for another step.
-3. agent-mode checks the reply and applies it. Edits are applied only if the
-   lines they replace are still exactly what the agent saw (after accounting
-   for lines that moved), so a slow reply never clobbers what you typed.
+2. The agent gets all of that with your instruction, and works in Neovim
+   through agent-mode's MCP tools: `edit` (line edits), `lsp_rename`,
+   `code_action`, `show_answer` (Markdown under your line), `set_status`
+   (what it is doing, next to the line), and `run_lua`, whose result comes
+   straight back to it.
+3. Edits are applied only if the lines they replace are still exactly what
+   the agent saw (after accounting for lines that moved), so a slow agent
+   never clobbers what you typed; when they changed, the agent is told and
+   can look again.
 
-The buffer you asked from only changes through the reply, as one undo step;
-files the agent changes with its own tools are reloaded in any open buffer.
+The buffer you asked from only changes through those tools, each edit one
+undo step; files the agent changes with its own tools are reloaded in any
+open buffer. The MCP server is `bin/agent-mode-mcp`: a small headless Neovim
+that relays each tool call to your Neovim over its RPC socket.
 
 ## Hand requests to an agent session you already have open
 

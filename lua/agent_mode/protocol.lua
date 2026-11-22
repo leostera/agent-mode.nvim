@@ -1,306 +1,87 @@
--- The contract between agent-mode and the agent.
---
--- The agent never touches files. It answers with one JSON object describing
--- actions, and this module turns that untrusted text into a list of typed
--- actions, or an error explaining why it could not.
---
--- Response shape:
---   { "summary": "...", "actions": [ <action>, ... ] }
---
--- Actions:
---   { "type": "edit", "edits": [ { "start_line": 3, "end_line": 4, "text": "..." } ] }
---       Replace buffer lines start_line..end_line (1-based, inclusive) with
---       text. end_line = start_line - 1 inserts before start_line. An empty
---       text deletes the lines.
---   { "type": "lsp_rename", "new_name": "presenter" }
---       Rename the symbol under the cursor through the language server.
---   { "type": "code_action", "id": 2 }
---       Run one of the code actions listed in the prompt.
---   { "type": "message", "text": "..." }
---       Tell the user something instead of changing code.
---   { "type": "lua", "code": "..." }
---       Run Lua in the user's Neovim (when the user allows it). What it
---       returns and prints goes back to the agent, which then replies again.
+-- What agent-mode tells the agents it starts, and how it checks what they
+-- send its tools. Agents work in Neovim through the MCP tools in
+-- agent_mode.tool_specs; this is the guidance around them.
 
 local M = {}
 
 M.system_prompt = [[
-You are agent-mode, an assistant embedded in the Neovim editor. The user is
-editing a file and has given you a short instruction about the code at their
-cursor. You change the code by answering with exactly one JSON object and
-nothing else: no prose, no markdown fences.
+You are working for a user in the Neovim editor through agent-mode. The user
+asked something about the code at their cursor; the request below has the
+instruction, the file, the cursor, and the buffer with line numbers, and a
+context_id. Do it with agent-mode's tools (the agent-mode MCP server):
 
-The object has this shape, with the summary first:
-{"summary": "<what you are doing, in a few words>", "actions": [<action>, ...]}
+- edit: change the user's buffer, by the line numbers in the request.
+- lsp_rename: rename the symbol at the cursor across the project, when the
+  request says LSP rename is available. Prefer it for renames.
+- code_action: run one of the listed language server code actions.
+- show_answer: answer a question, inline below the user's line, in Markdown.
+- set_status: a few words on what you are doing, shown by the user's line.
 
-The summary is shown to the user while you write the rest, so write it
-first and make it say what you are about to do, like "Renaming message to
-presenter" or "Explaining the retry loop".
+Make the smallest change that does what the user asked, in the surrounding
+style. Use your own tools for everything on disk: other files, searching the
+project, tests, docs, and changes to files other than the user's buffer.
+Change the user's buffer (the file in the request) only with the edit,
+lsp_rename and code_action tools, never with your own file tools: it may
+have unsaved changes, and agent-mode applies edits to it as one undo step.
+Other open files you change are reloaded in Neovim for the user.
 
-Available actions:
-
-1. {"type": "lsp_rename", "new_name": "<identifier>"}
-   Renames the symbol under the cursor across the whole project using the
-   language server. Prefer this for renames whenever the prompt says
-   "LSP rename: available".
-
-2. {"type": "code_action", "id": <number>}
-   Runs one of the language server code actions listed in the prompt. Prefer
-   this when one of the listed actions does exactly what the user asked.
-
-3. {"type": "edit", "edits": [{"start_line": <n>, "end_line": <m>, "text": "<replacement>"}]}
-   Replaces lines n..m (1-based, inclusive) of the current buffer with the
-   replacement text. Lines are separated by "\n" in the text. Use
-   end_line = start_line - 1 to insert before start_line, and "" as the text
-   to delete lines. Always give the complete new content of every line in the
-   range, with the original indentation. Edits must not overlap. Use the line
-   numbers shown in the prompt; never include those line numbers in the text.
-
-4. {"type": "message", "text": "<text>"}
-   Says something to the user without changing code. Use it to answer a
-   question about the code or to explain why you cannot do what was asked.
-   It is shown inline, below the line the user asked from, rendered as
-   Markdown: use `inline code` for identifiers, short lists, and fenced code
-   blocks with a language (```lua) for snippets. Answer directly and
-   completely, without a preamble or headings.
-
-Make the smallest change that does what the user asked. Change only what the
-instruction covers, and keep the surrounding style.
-
-You have your own tools (reading, searching, editing files, running commands,
-codemode). Use them for anything on disk: other files, callers found by
-searching, tests, docs, and changes to files other than the user's buffer,
-such as adding a test file or updating callers elsewhere. Change the user's
-buffer (the file in the prompt) only through actions in your JSON reply,
-never with your tools: it may have unsaved edits, and agent-mode applies your
-actions to it as one undo step. Other open files you change are reloaded in
-Neovim for the user. When you are done, your final message is the JSON object
-and nothing else.
+When you are done, stop: the request ends when you do. If the user asked a
+question, answer it with show_answer; whatever you write as your last message
+otherwise is shown to them as the answer.
 ]]
 
 --- Added to the system prompt when requests share one conversation.
 M.session_prompt = [[
 
 Every request from this Neovim comes to you in this same conversation, so
-the user may refer to earlier questions, your answers, and what your Lua
-found ("the second caller", "do the same here"). Each request shows the
-buffer and cursor as they are now; trust that over what you saw before.
+the user may refer to earlier questions, your answers, and what you found
+("the second caller", "do the same here"). Each request shows the buffer and
+cursor as they are now; trust that over what you saw before.
 ]]
 
 --- Added to the system prompt when the user lets the agent run Lua.
 M.lua_prompt = [[
 
-5. {"type": "lua", "code": "<Lua source>"}
-   Runs Lua inside the user's Neovim (0.12, LuaJIT) and sends you what it
-   returned, what it printed, or the error it raised, after which you reply
-   again with more actions. It costs a round trip with the user, so use it
-   only for what lives inside Neovim and your own tools cannot reach: the
-   language servers (definitions, references, the call hierarchy,
-   diagnostics), unsaved buffers, windows and tabs, plugins, and showing the
-   user things in Neovim's own views (a new tab or split with a scratch
-   buffer, the quickfix list, jumping to a location). For files on disk and
-   searching the project, use your own tools first, then use Lua only to
-   present what you found.
-
-   Like a code mode: `describe()` returns what this Neovim has (version,
-   language servers, plugins, helpers) and the topics `describe(topic)`
-   knows: "lsp" (servers and what they support), "plugins", "commands",
-   "keymaps", "treesitter", "am", or any module name to list its functions
-   (`describe("telescope.builtin")`). The prompt already has a summary.
-   Helpers in the global `am`:
-     am.scratch(lines, {open="tab"|"split"|"vsplit", filetype=, name=}) shows
-       lines in a new scratch buffer (q closes it) and returns its number;
-     am.lsp(method, params, callback) asks the buffer's language servers
-       (params nil: the cursor) and calls back with {client, result, error}s,
-       or an empty list right away when no server supports the method. Use it
-       rather than vim.lsp.buf_request_all, which never calls back then. When
-       a server lacks something (check describe("lsp")), fall back to
-       searching the code, e.g. with vim.system({"rg", ...});
-     am.position_params() and am.lines(path_or_bufnr).
-   Everything else in Neovim's Lua API (vim.api, vim.lsp, vim.fn, plugins'
-   modules) is available as usual.
-
-   The code runs as a function body. A global `ctx` holds where the user is:
-   ctx.bufnr, ctx.win, ctx.row (1-based), ctx.col (0-based), ctx.file,
-   ctx.filetype, ctx.selection ({start_row, end_row} or nil), and
-   ctx.instruction. Return a value to send it to you (tables are fine; keep
-   them small). For anything asynchronous, such as vim.lsp.buf_request or
-   vim.system, call `local done = ctx.async()` first and then `done(value)`
-   when the result is in; never block Neovim with vim.wait or *_sync calls.
-   Callbacks of vim.system, vim.schedule, vim.defer_fn and LSP requests run
-   on the main loop, so vim.fn and vim.api work in them, and an error in
-   one comes back to you; raw vim.uv callbacks do not get this.
-   The user's editor must stay usable: no :quit, no writing files unless
-   asked, and leave the user's buffers as they were unless the instruction
-   says to change them.
-
-   A reply whose actions include "lua" and no "message" is an intermediate
-   step: you get the results and continue. To finish, reply with a "message"
-   (for example, saying what you opened) or with the edits. You have a
-   limited number of steps, so gather what you need in as few as possible,
-   for example by walking a whole call graph in one piece of code.
+run_lua runs Lua inside Neovim, for anything the other tools do not cover.
+It costs a round trip with the user, who may have to allow it, so use
+it only for what lives inside Neovim and your own tools cannot reach: the
+language servers (definitions, references, the call hierarchy,
+diagnostics), unsaved buffers, windows and tabs, plugins, and showing the
+user things in Neovim's own views (a scratch buffer in a new tab, the
+quickfix list, jumping to a location). Gather what you need in as few calls
+as possible, for example by walking a whole call graph in one piece of code.
+The request starts with a summary of this Neovim (language servers and
+their capabilities); describe(topic) in Lua tells you more.
 ]]
-
-local function fail(fmt, ...)
-  return nil, string.format(fmt, ...)
-end
 
 local function is_integer(value)
   return type(value) == "number" and value == math.floor(value)
 end
 
-local function is_nonempty_string(value)
-  return type(value) == "string" and value ~= ""
-end
-
---- Pull the JSON object out of the agent's text. Models sometimes wrap it in
---- a markdown fence or a sentence despite being told not to.
-local function extract_object(text)
-  local first = text:find("{", 1, true)
-  local last
-  for i = #text, 1, -1 do
-    if text:sub(i, i) == "}" then
-      last = i
-      break
-    end
-  end
-  if not first or not last or last < first then
-    return nil
-  end
-  return text:sub(first, last)
-end
-
-local function parse_edit(raw, index)
-  if type(raw) ~= "table" then
-    return fail("edit %d is not an object", index)
-  end
-  if not is_integer(raw.start_line) or raw.start_line < 1 then
-    return fail("edit %d has an invalid start_line", index)
-  end
-  if not is_integer(raw.end_line) or raw.end_line < raw.start_line - 1 then
-    return fail("edit %d has an invalid end_line", index)
-  end
-  if type(raw.text) ~= "string" then
-    return fail("edit %d has no text", index)
-  end
-  return { start_line = raw.start_line, end_line = raw.end_line, text = raw.text }
-end
-
-local function parse_action(raw, index)
-  if type(raw) ~= "table" then
-    return fail("action %d is not an object", index)
-  end
-
-  if raw.type == "edit" then
-    if type(raw.edits) ~= "table" or #raw.edits == 0 then
-      return fail("edit action %d has no edits", index)
-    end
-    local edits = {}
-    for i, raw_edit in ipairs(raw.edits) do
-      local edit, err = parse_edit(raw_edit, i)
-      if not edit then
-        return nil, err
-      end
-      edits[#edits + 1] = edit
-    end
-    return { type = "edit", edits = edits }
-  end
-
-  if raw.type == "lsp_rename" then
-    if not is_nonempty_string(raw.new_name) then
-      return fail("lsp_rename action %d has no new_name", index)
-    end
-    return { type = "lsp_rename", new_name = raw.new_name }
-  end
-
-  if raw.type == "code_action" then
-    if not is_integer(raw.id) then
-      return fail("code_action action %d has no numeric id", index)
-    end
-    return { type = "code_action", id = raw.id }
-  end
-
-  if raw.type == "message" then
-    if not is_nonempty_string(raw.text) then
-      return fail("message action %d has no text", index)
-    end
-    return { type = "message", text = raw.text }
-  end
-
-  if raw.type == "lua" then
-    if not is_nonempty_string(raw.code) then
-      return fail("lua action %d has no code", index)
-    end
-    return { type = "lua", code = raw.code }
-  end
-
-  return fail("action %d has unknown type %s", index, vim.inspect(raw.type))
-end
-
---- A parameter of a tool-call-shaped reply: JSON when it looks like JSON,
---- else the text itself.
-local function invoke_value(text)
-  local trimmed = vim.trim(text)
-  if trimmed:match("^[%[{]") or trimmed:match("^%-?%d+%.?%d*$") then
-    local ok, value = pcall(vim.json.decode, trimmed, { luanil = { object = true, array = true } })
-    if ok then
-      return value
-    end
-  end
-  return text:gsub("^\n", ""):gsub("\n$", "")
-end
-
---- Some models answer later turns in their tool-call markup instead of JSON:
----   <invoke name="lua"><parameter name="code">...</parameter></invoke>
---- Read each invoke as the action of that type, its parameters as fields.
-local function decode_invokes(text)
-  local actions = {}
-  for name, body in text:gmatch('<invoke name="([%w_]+)">(.-)</invoke>') do
-    local action = { type = name }
-    for key, value in body:gmatch('<parameter name="([%w_]+)">(.-)</parameter>') do
-      action[key] = invoke_value(value)
-    end
-    actions[#actions + 1] = action
-  end
-  return #actions > 0 and { actions = actions } or nil
-end
-
---- Parse the agent's raw output into { summary = string?, actions = {...} }.
---- @param text string
---- @return table|nil response
+--- Check the edits an agent sent the edit tool.
+--- @return { start_line: integer, end_line: integer, text: string }[]|nil edits
 --- @return string|nil err
-function M.parse(text)
-  local decoded = decode_invokes(text or "")
-  if not decoded then
-    local object = extract_object(text or "")
-    if not object then
-      return fail("agent reply has no JSON object: %s", vim.trim(text or ""):sub(1, 200))
+function M.edits(raw)
+  if type(raw) ~= "table" or #raw == 0 then
+    return nil, "edits must be a non-empty list"
+  end
+  local edits = {}
+  for i, edit in ipairs(raw) do
+    if type(edit) ~= "table" then
+      return nil, string.format("edit %d is not an object", i)
     end
-    local ok, value = pcall(vim.json.decode, object, { luanil = { object = true, array = true } })
-    if not ok or type(value) ~= "table" then
-      return fail("agent reply is not valid JSON: %s", object:sub(1, 200))
+    if not is_integer(edit.start_line) or edit.start_line < 1 then
+      return nil, string.format("edit %d has an invalid start_line", i)
     end
-    decoded = value
-  end
-  if (type(decoded.actions) ~= "table" or #decoded.actions == 0) and is_nonempty_string(decoded.summary) then
-    -- Some models put a short answer in the summary and leave out the actions.
-    decoded.actions = { { type = "message", text = decoded.summary } }
-  end
-  if type(decoded.actions) ~= "table" or #decoded.actions == 0 then
-    return fail("agent reply has no actions")
-  end
-
-  local actions = {}
-  for i, raw in ipairs(decoded.actions) do
-    local action, err = parse_action(raw, i)
-    if not action then
-      return nil, err
+    if not is_integer(edit.end_line) or edit.end_line < edit.start_line - 1 then
+      return nil, string.format("edit %d has an invalid end_line", i)
     end
-    actions[#actions + 1] = action
+    if type(edit.text) ~= "string" then
+      return nil, string.format("edit %d has no text", i)
+    end
+    edits[i] = { start_line = edit.start_line, end_line = edit.end_line, text = edit.text }
   end
-
-  local summary = is_nonempty_string(decoded.summary) and decoded.summary or nil
-  return { summary = summary, actions = actions }
+  return edits
 end
 
 return M
