@@ -379,7 +379,7 @@ local function map_keys(bufnr, keys)
 end
 
 --- Show `text` below line `row` (1-based) of `bufnr`.
---- @param opts { title: string, keys: { dismiss: string|false, next: string|false, prev: string|false } }
+--- @param opts { title: string, keys: agent_mode.AnswerKeymaps|nil }
 function M.show(bufnr, row, text, opts)
   bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
   local virt_lines = {
