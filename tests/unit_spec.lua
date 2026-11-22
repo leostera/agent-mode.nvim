@@ -483,4 +483,68 @@ H.test("axo's watcher ignores other turns and reports progress, then the reply",
   H.eq({ { kind = "reply", text = "Done.", stop_reason = "stop", tools = { "edit" } } }, watch(final:sub(21)))
 end)
 
+-- run_lua --------------------------------------------------------------------
+
+local run_lua = require("agent_mode.run_lua")
+
+local function run_code(code, ctx, timeout_ms)
+  local report
+  run_lua.run(code, ctx or { bufnr = vim.api.nvim_get_current_buf(), row = 1, col = 0 }, timeout_ms or 2000, function(r)
+    report = r
+  end)
+  H.truthy(vim.wait(3000, function()
+    return report ~= nil
+  end, 10), "lua did not finish")
+  return report
+end
+
+H.test("the protocol accepts lua actions with code", function()
+  local response = assert(protocol.parse('{"actions":[{"type":"lua","code":"return 1"}]}'))
+  H.eq({ { type = "lua", code = "return 1" } }, response.actions)
+  local _, err = protocol.parse('{"actions":[{"type":"lua","code":""}]}')
+  H.contains(err, "lua action 1 has no code")
+end)
+
+H.test("tool-call markup reads as the same actions", function()
+  local response = assert(protocol.parse(
+    '<invoke name="lua">\n<parameter name="code">local t = {}\nreturn t</parameter>\n</invoke>\n'
+      .. '<invoke name="code_action"><parameter name="id">2</parameter></invoke>'
+  ))
+  H.eq({ { type = "lua", code = "local t = {}\nreturn t" }, { type = "code_action", id = 2 } }, response.actions)
+end)
+
+H.test("am.lsp calls back at once when no server supports the method", function()
+  H.eq("returned:\n{}", run_code("local done = ctx.async() am.lsp('callHierarchy/incomingCalls', {}, done)"))
+end)
+
+H.test("agent lua reports what it printed and returned, or its error", function()
+  H.eq("printed:\nhi\t2\nreturned:\n{\n  a = 1\n}", run_code("print('hi', 2) return { a = 1 }"))
+  H.eq("returned nothing", run_code("local x = 1"))
+  H.contains(run_code("error('boom')"), "error: agent-lua:1: boom")
+  H.contains(run_code("return +"), "error: agent-lua")
+  H.eq("returned:\n7", run_code("return ctx.row", { bufnr = 0, row = 7, col = 0 }))
+end)
+
+H.test("agent lua that calls ctx.async() finishes when done() is called, or times out", function()
+  H.eq("returned:\nlater", run_code("local done = ctx.async() vim.defer_fn(function() done('later') end, 50)"))
+  H.contains(run_code("ctx.async()", nil, 100), "done() was not")
+end)
+
+H.test("describe() lists what Neovim has, and the shape of any module", function()
+  local overview = run_code("return describe()")
+  for _, key in ipairs({ "neovim", "topics", "helpers", "language_servers" }) do
+    H.contains(overview, key)
+  end
+  H.contains(run_code("return describe('agent_mode.edits')"), 'plan = "function(edits, line_count)"')
+  H.contains(run_code("return describe('am')"), "am.scratch")
+  H.contains(run_code("return describe('no.such.module')"), "error: no module no.such.module")
+end)
+
+H.test("am.scratch opens the lines in a new tab", function()
+  local tabs = #vim.api.nvim_list_tabpages()
+  H.contains(run_code("local b = am.scratch('a\\nb', { filetype = 'markdown' }) return vim.api.nvim_buf_get_lines(b, 0, -1, false)"), '{ "a", "b" }')
+  H.eq(tabs + 1, #vim.api.nvim_list_tabpages())
+  vim.cmd("tabclose")
+end)
+
 H.run()

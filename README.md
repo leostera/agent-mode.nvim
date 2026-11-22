@@ -114,6 +114,40 @@ Commands:
 - `:AgentModeDismiss[!]`: clear the answer nearest the cursor (all with `!`)
 - `:AgentModeLog`: show the last prompt, command, and raw reply
 
+## Let the agent look around and show you things
+
+Some requests need more than the file you are in: "show me the call graph
+starting here", "where else is this used?", "open the tests for this in a
+split". For those, the agent can send Lua that agent-mode runs in your Neovim.
+What the code returns or prints goes back to the agent, which takes another
+step or answers. A request can take up to `max_turns` steps.
+
+The agent's code works like a code mode:
+
+- `describe()` lists what your Neovim has: its version, the language servers
+  on the buffer, your plugins, and helpers.
+- `describe("lsp")`, `describe("plugins")`, `describe("commands")`,
+  `describe("keymaps")` and `describe("treesitter")` give the details, and
+  `describe("telescope.builtin")` lists any module's functions.
+- The prompt already includes a one-line summary: the Neovim version, the
+  language servers and which of call hierarchy, references, definition and
+  type hierarchy each supports, and your lazy.nvim plugins.
+- Helpers keep the code short:
+  - `am.scratch(lines, { open = "tab" })` shows results in a scratch buffer
+    (`q` closes it).
+  - `am.lsp(method, params, callback)` asks the buffer's language servers.
+  - `am.lines(path)` reads a buffer or file.
+- `ctx` says where you are (buffer, window, line, column, selection), and
+  `ctx.async()` lets the code wait for language servers or processes without
+  blocking the editor.
+
+By default agent-mode shows the code first: `y` runs it, `a` runs it and the
+rest of that request's code, and `n` skips it (the agent is told). Set
+`lua = "allow"` to skip the question, or `lua = false` to not offer Lua at all.
+The code runs with your editor's full permissions, so keep the question on if
+you ask about code you don't trust: a file can contain text that tries to
+steer the agent.
+
 ## Configuration
 
 Everything is optional; these are the defaults.
@@ -131,7 +165,10 @@ require("agent_mode").setup({
   answer_keymaps = { enter = "<CR>", dismiss = "<Esc>", next = "]a", prev = "[a" },
   max_lines = 2000,        -- longer buffers are sent as a window around the cursor
   code_action_timeout_ms = 1000,
-  timeout_ms = 120000,
+  timeout_ms = 120000,     -- per reply from the agent
+  lua = "confirm",         -- let the agent run Lua: "confirm", "allow", or false
+  lua_timeout_ms = 10000,  -- how long its asynchronous Lua may take
+  max_turns = 8,           -- replies per request; each round of Lua is one
 })
 ```
 
@@ -171,7 +208,8 @@ end
    actions they offer.
 2. The agent gets all of that with your instruction, and replies with one JSON
    object: a summary (shown next to the line while it works), and actions:
-   an LSP rename, one of the listed code actions, line edits, or an answer.
+   an LSP rename, one of the listed code actions, line edits, an answer, or
+   Lua to run in Neovim, whose result goes back to the agent for another step.
 3. agent-mode checks the reply and applies it. Edits are applied only if the
    lines they replace are still exactly what the agent saw (after accounting
    for lines that moved), so a slow reply never clobbers what you typed.

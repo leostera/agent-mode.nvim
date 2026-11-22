@@ -25,6 +25,8 @@ local edits = require("agent_mode.edits")
 local input = require("agent_mode.input")
 local lsp = require("agent_mode.lsp")
 local protocol = require("agent_mode.protocol")
+local run_lua = require("agent_mode.run_lua")
+local introspect = require("agent_mode.introspect")
 local spinner = require("agent_mode.spinner")
 
 local M = {}
@@ -74,8 +76,20 @@ local defaults = {
   max_lines = 2000,
   -- How long to wait for language servers to list code actions.
   code_action_timeout_ms = 1000,
-  -- How long to wait for the agent before giving up.
+  -- How long to wait for each reply from the agent before giving up.
   timeout_ms = 120000,
+  -- Whether the agent may run Lua in Neovim to look things up (references,
+  -- the call hierarchy, other files) and show them (tabs, splits, quickfix).
+  -- What the code returns goes back to the agent for its next step.
+  --   "confirm": show the code and ask first (y run, a run all for this
+  --     request, n skip)
+  --   "allow": run it without asking
+  --   false: the agent is not offered Lua
+  lua = "confirm",
+  -- How long Lua that called ctx.async() may take to call done().
+  lua_timeout_ms = 10000,
+  -- How many replies a request may take; each round of Lua is one more.
+  max_turns = 8,
 }
 
 M.config = vim.deepcopy(defaults)
@@ -99,10 +113,14 @@ end
 -- Agents ----------------------------------------------------------------------
 
 local function system_prompt()
-  if M.config.system_prompt and M.config.system_prompt ~= "" then
-    return protocol.system_prompt .. "\nAdditional instructions from the user:\n" .. M.config.system_prompt
+  local prompt = protocol.system_prompt
+  if M.config.lua then
+    prompt = prompt .. protocol.lua_prompt
   end
-  return protocol.system_prompt
+  if M.config.system_prompt and M.config.system_prompt ~= "" then
+    prompt = prompt .. "\nAdditional instructions from the user:\n" .. M.config.system_prompt
+  end
+  return prompt
 end
 
 --- The command for this request, from the configured agent.
@@ -163,6 +181,8 @@ local function show_answer(request, text)
 end
 
 local start_next_delegated -- defined with the Axo flow below
+local run_lua_action -- defined with the actions below
+local start_agent -- defined below; called again for each turn
 
 local function finish(request, err)
   if request.finished then
@@ -206,6 +226,10 @@ end
 --- Our own timer rather than vim.system's, so the request finishes even if a
 --- killed agent's children keep its output pipe open.
 local function start_timeout(request, timeout_ms)
+  if request.timer then
+    request.timer:stop()
+    request.timer:close()
+  end
   request.timer = vim.uv.new_timer()
   request.timer:start(timeout_ms, 0, vim.schedule_wrap(function()
     finish(request, string.format("agent timed out after %d ms", timeout_ms))
@@ -239,8 +263,63 @@ local function action_status(action, code_actions)
   elseif action.type == "code_action" then
     local entry = code_actions[action.id]
     return "running code action: " .. (entry and entry.title or tostring(action.id))
+  elseif action.type == "lua" then
+    return "running Lua in Neovim"
   end
   return nil
+end
+
+--- Where the user is now, for the agent's Lua.
+local function lua_context(request)
+  local snapshot = request.snapshot
+  local bufnr = snapshot.bufnr
+  local win = vim.api.nvim_get_current_win()
+  if vim.api.nvim_win_get_buf(win) ~= bufnr then
+    win = vim.fn.bufwinid(bufnr)
+  end
+  local moved = shift(request)
+  local selection = snapshot.selection
+      and { start_row = snapshot.selection.start_row + moved, end_row = snapshot.selection.end_row + moved }
+    or nil
+  return {
+    bufnr = bufnr,
+    win = win ~= -1 and win or nil,
+    row = current_row(request),
+    col = snapshot.position.col,
+    file = snapshot.path,
+    filetype = snapshot.filetype,
+    selection = selection,
+    instruction = request.instruction,
+  }
+end
+
+--- Run the agent's Lua, asking first unless allowed, and keep the report for
+--- its next turn. Declining is not an error: the agent is told and goes on.
+run_lua_action = function(request, action, on_done)
+  local function record(result)
+    request.lua_results[#request.lua_results + 1] = result
+    on_done(nil)
+  end
+  local function run()
+    request.spinner:set_status("running Lua in Neovim")
+    run_lua.run(action.code, lua_context(request), M.config.lua_timeout_ms, function(report)
+      record(report)
+    end)
+  end
+  if M.config.lua == "allow" or request.lua_allowed then
+    return run()
+  end
+  request.spinner:set_status("waiting for you to allow its Lua…")
+  run_lua.confirm(action.code, agent_name() .. " wants to run Lua", function(choice)
+    if request.finished then
+      return
+    end
+    if choice == "skip" then
+      return record("the user declined to run this code")
+    end
+    request.lua_allowed = choice == "always"
+    run()
+  end)
 end
 
 --- Run one action against the buffer as it is now. Calls `on_done(err)`.
@@ -280,6 +359,10 @@ local function run_action(request, action, on_done)
     show_answer(request, action.text)
     return on_done(nil)
   end
+
+  if action.type == "lua" then
+    return run_lua_action(request, action, on_done)
+  end
 end
 
 --- Run `actions` one after another; each may be asynchronous.
@@ -302,7 +385,7 @@ end
 
 local function handle_reply(request, result, reply)
   local log = request.log
-  log.stdout = reply
+  log.stdout = (log.stdout and log.stdout .. "\n\n--- next turn ---\n\n" or "") .. reply
   log.stderr = result.stderr
 
   if request.finished then
@@ -325,24 +408,72 @@ local function handle_reply(request, result, reply)
     return finish(request, "the buffer was closed while the agent was working")
   end
 
-  run_actions(request, response.actions, function(err)
-    local answered = vim.iter(response.actions):any(function(action)
-      return action.type == "message"
+  local function has(kind)
+    return vim.iter(response.actions):any(function(action)
+      return action.type == kind
     end)
-    if not err and response.summary and not answered then
+  end
+  if has("lua") and not M.config.lua then
+    return finish(request, "the agent sent Lua to run, but `lua` is off")
+  end
+
+  request.lua_results = {}
+  run_actions(request, response.actions, function(err)
+    if err then
+      return finish(request, err)
+    end
+    -- Lua without an answer is a step: the agent gets the results and goes on.
+    if has("lua") and not has("message") and not request.finished then
+      request.turns[#request.turns + 1] = { reply = reply, results = request.lua_results }
+      if #request.turns >= M.config.max_turns then
+        return finish(request, string.format("the agent used all %d steps without finishing", M.config.max_turns))
+      end
+      return start_agent(request)
+    end
+    if response.summary and not has("message") then
       notify(response.summary)
     end
-    finish(request, err)
+    finish(request, nil)
   end)
 end
 
-local function start_agent(request)
+--- The first prompt, followed by every earlier reply and what its Lua did.
+local function turn_prompt(request)
+  local parts = { request.first_prompt }
+  for i, turn in ipairs(request.turns) do
+    parts[#parts + 1] = string.format("\n\nYour reply %d:\n%s", i, vim.trim(turn.reply))
+    for j, result in ipairs(turn.results) do
+      parts[#parts + 1] = string.format("\n\nResult of lua action %d:\n%s", j, result)
+    end
+  end
+  if #request.turns > 0 then
+    parts[#parts + 1] = string.format(
+      "\n\nContinue with your next reply (step %d of at most %d). Reply with exactly one JSON object in the"
+        .. " same format as before, {\"summary\": ..., \"actions\": [...]}, and nothing else.",
+      #request.turns + 1,
+      M.config.max_turns
+    )
+  end
+  return table.concat(parts)
+end
+
+start_agent = function(request)
   local snapshot = request.snapshot
-  local prompt = context.render(snapshot, request.instruction, {
-    can_rename = lsp.can_rename(snapshot.bufnr),
-    code_actions = request.code_actions,
-  }, M.config.max_lines)
+  if not request.first_prompt then
+    request.first_prompt = context.render(snapshot, request.instruction, {
+      can_rename = lsp.can_rename(snapshot.bufnr),
+      code_actions = request.code_actions,
+    }, M.config.max_lines)
+    if M.config.lua then
+      request.first_prompt = "Neovim: " .. introspect.summary(snapshot.bufnr) .. "\n" .. request.first_prompt
+    end
+    request.turns = {}
+  end
+  local prompt = turn_prompt(request)
   request.log.prompt = prompt
+  if #request.turns > 0 then
+    start_timeout(request, M.config.timeout_ms)
+  end
 
   local command, command_err = agent_command(prompt)
   if not command then

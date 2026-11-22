@@ -18,6 +18,9 @@
 --       Run one of the code actions listed in the prompt.
 --   { "type": "message", "text": "..." }
 --       Tell the user something instead of changing code.
+--   { "type": "lua", "code": "..." }
+--       Run Lua in the user's Neovim (when the user allows it). What it
+--       returns and prints goes back to the agent, which then replies again.
 
 local M = {}
 
@@ -63,6 +66,55 @@ Available actions:
 
 Make the smallest change that does what the user asked. Change only what the
 instruction covers, and keep the surrounding style.
+]]
+
+--- Added to the system prompt when the user lets the agent run Lua.
+M.lua_prompt = [[
+
+5. {"type": "lua", "code": "<Lua source>"}
+   Runs Lua inside the user's Neovim (0.12, LuaJIT) and sends you what it
+   returned, what it printed, or the error it raised, after which you reply
+   again with more actions. Use it to look things up you cannot see in the
+   prompt (other files, language server results such as definitions,
+   references or the call hierarchy, diagnostics elsewhere, git), and to show
+   the user things in Neovim's own views: open a new tab or a split with a
+   scratch buffer (buftype=nofile), fill the quickfix list and open it, jump
+   to a location.
+
+   Like a code mode: `describe()` returns what this Neovim has (version,
+   language servers, plugins, helpers) and the topics `describe(topic)`
+   knows: "lsp" (servers and what they support), "plugins", "commands",
+   "keymaps", "treesitter", "am", or any module name to list its functions
+   (`describe("telescope.builtin")`). The prompt already has a summary.
+   Helpers in the global `am`:
+     am.scratch(lines, {open="tab"|"split"|"vsplit", filetype=, name=}) shows
+       lines in a new scratch buffer (q closes it) and returns its number;
+     am.lsp(method, params, callback) asks the buffer's language servers
+       (params nil: the cursor) and calls back with {client, result, error}s,
+       or an empty list right away when no server supports the method. Use it
+       rather than vim.lsp.buf_request_all, which never calls back then. When
+       a server lacks something (check describe("lsp")), fall back to
+       searching the code, e.g. with vim.system({"rg", ...});
+     am.position_params() and am.lines(path_or_bufnr).
+   Everything else in Neovim's Lua API (vim.api, vim.lsp, vim.fn, plugins'
+   modules) is available as usual.
+
+   The code runs as a function body. A global `ctx` holds where the user is:
+   ctx.bufnr, ctx.win, ctx.row (1-based), ctx.col (0-based), ctx.file,
+   ctx.filetype, ctx.selection ({start_row, end_row} or nil), and
+   ctx.instruction. Return a value to send it to you (tables are fine; keep
+   them small). For anything asynchronous, such as vim.lsp.buf_request or
+   vim.system, call `local done = ctx.async()` first and then `done(value)`
+   when the result is in; never block Neovim with vim.wait or *_sync calls.
+   The user's editor must stay usable: no :quit, no writing files unless
+   asked, and leave the user's buffers as they were unless the instruction
+   says to change them.
+
+   A reply whose actions include "lua" and no "message" is an intermediate
+   step: you get the results and continue. To finish, reply with a "message"
+   (for example, saying what you opened) or with the edits. You have a
+   limited number of steps, so gather what you need in as few as possible,
+   for example by walking a whole call graph in one piece of code.
 ]]
 
 local function fail(fmt, ...)
@@ -151,7 +203,42 @@ local function parse_action(raw, index)
     return { type = "message", text = raw.text }
   end
 
+  if raw.type == "lua" then
+    if not is_nonempty_string(raw.code) then
+      return fail("lua action %d has no code", index)
+    end
+    return { type = "lua", code = raw.code }
+  end
+
   return fail("action %d has unknown type %s", index, vim.inspect(raw.type))
+end
+
+--- A parameter of a tool-call-shaped reply: JSON when it looks like JSON,
+--- else the text itself.
+local function invoke_value(text)
+  local trimmed = vim.trim(text)
+  if trimmed:match("^[%[{]") or trimmed:match("^%-?%d+%.?%d*$") then
+    local ok, value = pcall(vim.json.decode, trimmed, { luanil = { object = true, array = true } })
+    if ok then
+      return value
+    end
+  end
+  return text:gsub("^\n", ""):gsub("\n$", "")
+end
+
+--- Some models answer later turns in their tool-call markup instead of JSON:
+---   <invoke name="lua"><parameter name="code">...</parameter></invoke>
+--- Read each invoke as the action of that type, its parameters as fields.
+local function decode_invokes(text)
+  local actions = {}
+  for name, body in text:gmatch('<invoke name="([%w_]+)">(.-)</invoke>') do
+    local action = { type = name }
+    for key, value in body:gmatch('<parameter name="([%w_]+)">(.-)</parameter>') do
+      action[key] = invoke_value(value)
+    end
+    actions[#actions + 1] = action
+  end
+  return #actions > 0 and { actions = actions } or nil
 end
 
 --- Parse the agent's raw output into { summary = string?, actions = {...} }.
@@ -159,14 +246,17 @@ end
 --- @return table|nil response
 --- @return string|nil err
 function M.parse(text)
-  local object = extract_object(text or "")
-  if not object then
-    return fail("agent reply has no JSON object: %s", vim.trim(text or ""):sub(1, 200))
-  end
-
-  local ok, decoded = pcall(vim.json.decode, object, { luanil = { object = true, array = true } })
-  if not ok or type(decoded) ~= "table" then
-    return fail("agent reply is not valid JSON: %s", object:sub(1, 200))
+  local decoded = decode_invokes(text or "")
+  if not decoded then
+    local object = extract_object(text or "")
+    if not object then
+      return fail("agent reply has no JSON object: %s", vim.trim(text or ""):sub(1, 200))
+    end
+    local ok, value = pcall(vim.json.decode, object, { luanil = { object = true, array = true } })
+    if not ok or type(value) ~= "table" then
+      return fail("agent reply is not valid JSON: %s", object:sub(1, 200))
+    end
+    decoded = value
   end
   if type(decoded.actions) ~= "table" or #decoded.actions == 0 then
     return fail("agent reply has no actions")

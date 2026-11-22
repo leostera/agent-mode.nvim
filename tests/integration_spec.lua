@@ -475,4 +475,68 @@ else
   io.stdout:write("skip lsp tests: lua-language-server not found\n")
 end
 
+--- An agent that answers each turn with the next of `replies`, and keeps
+--- the prompts it was sent.
+local function scripted_agent(replies, opts)
+  local prompts = {}
+  agent_mode.setup(vim.tbl_extend("force", {
+    keymap = false,
+    lua = "allow",
+    agent = function(request)
+      prompts[#prompts + 1] = request.prompt
+      local reply = replies[#prompts] or replies[#replies]
+      return { argv = { H.root .. "/tests/fake_agent.sh", vim.json.encode(reply), "0" }, stdin = "" }
+    end,
+  }, opts or {}))
+  return prompts
+end
+
+H.test("lua results go back to the agent until it answers", function()
+  local buf = H.buffer({ "local a = 1" }, "lua")
+  local prompts = scripted_agent({
+    { summary = "Looking", actions = { { type = "lua", code = "return { line = ctx.row, n = 41 + 1 }" } } },
+    { actions = { { type = "message", text = "it is 42" } } },
+  })
+  H.eq(nil, H.run_agent("what is it?", { position = { row = 1, col = 0 } }))
+  H.eq(2, #prompts)
+  H.contains(prompts[1], "Neovim: Neovim 0.")
+  H.contains(prompts[2], "Your reply 1:")
+  H.contains(prompts[2], "Result of lua action 1:\nreturned:\n{\n  line = 1,\n  n = 42\n}")
+  H.contains(prompts[2], "step 2 of at most 8). Reply with exactly one JSON object")
+  agent_mode.dismiss(true)
+end)
+
+H.test("a request stops after max_turns rounds of lua", function()
+  H.buffer({ "local a = 1" }, "lua")
+  local prompts = scripted_agent({ { actions = { { type = "lua", code = "return 1" } } } }, { max_turns = 3 })
+  H.contains(H.run_agent("loop", { position = { row = 1, col = 0 } }), "used all 3 steps")
+  H.eq(3, #prompts)
+end)
+
+H.test("with lua = confirm, declining tells the agent; with lua off, it is not offered", function()
+  H.buffer({ "local a = 1" }, "lua")
+  local run_lua = require("agent_mode.run_lua")
+  local confirm = run_lua.confirm
+  run_lua.confirm = function(_, _, on_choice)
+    vim.schedule(function() on_choice("skip") end)
+  end
+  local prompts = scripted_agent({
+    { actions = { { type = "lua", code = "vim.g.ran = true" } } },
+    { actions = { { type = "message", text = "ok" } } },
+  }, { lua = "confirm" })
+  H.eq(nil, H.run_agent("try", { position = { row = 1, col = 0 } }))
+  run_lua.confirm = confirm
+  H.eq(nil, vim.g.ran)
+  H.contains(prompts[2], "the user declined to run this code")
+  agent_mode.dismiss(true)
+
+  local seen
+  agent_mode.setup({ keymap = false, lua = false, agent = function(request)
+    seen = request.system_prompt
+    return { argv = { H.root .. "/tests/fake_agent.sh", '{"actions":[{"type":"lua","code":"return 1"}]}', "0" }, stdin = "" }
+  end })
+  H.contains(H.run_agent("try", { position = { row = 1, col = 0 } }), "`lua` is off")
+  H.truthy(not seen:find('"type": "lua"', 1, true), "lua offered while off")
+end)
+
 H.run()
