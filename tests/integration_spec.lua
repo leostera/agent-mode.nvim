@@ -520,7 +520,7 @@ H.test("requests share one session and run one at a time", function()
   agent_mode.dismiss(true)
 end)
 
-H.test(":AgentModeConfig is a vim.ui.select menu that comes back after each change", function()
+H.test(":AgentMode config is a vim.ui.select menu that comes back after each change", function()
   agent_mode.setup({ keymap = false, agent = "pi", model = "m1", thinking = "high" })
   local select, input = vim.ui.select, vim.ui.input
   -- Each step picks the item whose text starts with the given string, from
@@ -558,7 +558,7 @@ H.test(":AgentModeConfig is a vim.ui.select menu that comes back after each chan
   H.eq("max", agent_mode.config.thinking)
   H.eq(false, agent_mode.config.lua)
   H.eq(false, agent_mode.config.session)
-  H.eq('require("agent_mode").setup({\n  agent = "claude",\n  model = "opus",\n  thinking = "max",\n  lua = false,\n  session = false,\n  keymap = false,\n})', vim.fn.getreg('"'))
+  H.eq('require("agent_mode").setup({\n  agent = "claude",\n  model = "opus",\n  thinking = "max",\n  lua = false,\n  session = false,\n})', vim.fn.getreg('"'))
 end)
 
 H.test("files the agent changed on disk are reloaded, unless they have unsaved changes", function()

@@ -18,7 +18,7 @@ function M.start(bufnr, row, status)
   local frame = 1
   local stopped = false
   status = status or "agent working…"
-  local timer = vim.uv.new_timer()
+  local timer = assert(vim.uv.new_timer())
   local mark = vim.api.nvim_buf_set_extmark(bufnr, namespace, row - 1, 0, {})
 
   local function draw()

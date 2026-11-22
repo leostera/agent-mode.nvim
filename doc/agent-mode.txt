@@ -1,0 +1,198 @@
+*agent-mode.txt*  Ask your coding agent about the code at the cursor
+
+==============================================================================
+CONTENTS                                                 *agent-mode-contents*
+
+  1. Introduction ............................... |agent-mode-intro|
+  2. Setup ...................................... |agent-mode-setup|
+  3. Usage ...................................... |agent-mode-usage|
+  4. Commands ................................... |agent-mode-commands|
+  5. Settings ................................... |agent-mode-settings|
+  6. Agents ..................................... |agent-mode-agents|
+  7. Lua in Neovim .............................. |agent-mode-lua|
+  8. Lua API .................................... |agent-mode-api|
+  9. Highlights ................................. |agent-mode-highlights|
+
+==============================================================================
+1. INTRODUCTION                                             *agent-mode-intro*
+
+Put the cursor on a line, press your key, and type a question or an
+instruction. Answers render as Markdown right under the line; changes land in
+the buffer as one undo step. It works with the agent CLI you already use:
+Claude Code, Codex, OpenCode or pi.
+
+Every request from one Neovim goes to the same conversation with the agent,
+so you can refer to earlier answers. The agent can also run Lua in your
+Neovim to ask your language servers or show you things in a tab.
+
+==============================================================================
+2. SETUP                                                    *agent-mode-setup*
+
+Requires Neovim 0.12 or newer and an agent CLI, installed and logged in.
+Nothing else is required: the plugin loads its commands at startup and the
+rest when you first use it. Map a key to |<Plug>(AgentMode)|: >lua
+
+    vim.keymap.set({ "n", "x" }, "<leader>a", "<Plug>(AgentMode)")
+<
+Pick your agent with |vim.g.agent_mode| (works even before the plugin
+loads) or with `setup()`: >lua
+
+    vim.g.agent_mode = { agent = "claude" }
+    -- or
+    require("agent_mode").setup({ agent = "claude" })
+<
+Check your setup with: >vim
+
+    :checkhealth agent_mode
+<
+                                                           *<Plug>(AgentMode)*
+<Plug>(AgentMode)       Normal and Visual mode. Open the prompt below the
+                        cursor and ask about, or change, the code at the
+                        cursor or in the selection.
+
+==============================================================================
+3. USAGE                                                    *agent-mode-usage*
+
+While a request runs, the line shows what the agent is doing. You can keep
+editing and send more requests; in one conversation they run one at a time
+(see `session`). Edits are applied only if the lines they replace are still
+what the agent saw.
+
+These keys exist only in buffers that show an answer:
+
+  <CR>      on a line with an answer: step into it to scroll, select and
+            yank; `q` goes back
+  ]a  [a    next / previous answer
+  <Esc>     dismiss the answer nearest the cursor
+
+Change them with `answer_keymaps`.
+
+==============================================================================
+4. COMMANDS                                              *agent-mode-commands*
+
+                                                                  *:AgentMode*
+:AgentMode              Open the prompt, like |<Plug>(AgentMode)|.
+
+:AgentMode ask {text}   Run {text} as an instruction at the cursor.
+
+:AgentMode cancel       Stop the requests on the cursor line, or all of
+                        them if there are none on it.
+
+:AgentMode dismiss[!]   Clear the answer nearest the cursor; with ! clear
+                        all of them.
+
+:AgentMode agent [name] Show the agent, or switch to {name}.
+
+:AgentMode config       A menu to change the agent, model, thinking, Lua,
+                        conversation and prompt settings for this session,
+                        start a new conversation, or copy the settings as
+                        Lua. Drawn by snacks.nvim when installed, else
+                        |vim.ui.select|.
+
+:AgentMode new          Start a new conversation with the agent.
+
+:AgentMode log          Show the last request's prompt, command, session
+                        and reply.
+
+==============================================================================
+5. SETTINGS                                              *agent-mode-settings*
+
+                                                             *vim.g.agent_mode*
+Settings come from the defaults, then |vim.g.agent_mode| (a table, or a
+function returning one), then `setup()` and `configure()`. Unknown keys are
+reported by |:checkhealth|. Defaults:
+>lua
+    {
+      agent = "pi",            -- "claude", "codex", "opencode", "pi",
+                               -- "axo", or a function (|agent-mode-agents|)
+      cmd = nil,               -- path to the agent's executable
+      model = nil,             -- nil: the agent's default
+      thinking = nil,          -- reasoning level, passed to the agent
+      system_prompt = nil,     -- your instructions, added to agent-mode's
+      args = {},               -- extra CLI arguments for the agent
+      input = "cursor",        -- "cursor": prompt below the cursor;
+                               -- "cmdline": |vim.ui.input|
+      answer_keymaps = { enter = "<CR>", dismiss = "<Esc>",
+                         next = "]a", prev = "[a" },
+      max_lines = 2000,        -- longer buffers are sent as a window
+      code_action_timeout_ms = 1000,
+      timeout_ms = 120000,     -- per reply from the agent
+      lua = "confirm",         -- the agent's Lua: "confirm", "allow", false
+      lua_timeout_ms = 10000,  -- for Lua that waits (ctx.async)
+      max_turns = 8,           -- replies per request
+      session = true,          -- one conversation per Neovim
+      axo = { session = "self", cmd = "axo", timeout_ms = 600000 },
+    }
+<
+`keymap` is deprecated: map |<Plug>(AgentMode)| instead.
+
+==============================================================================
+6. AGENTS                                                  *agent-mode-agents*
+
+Each request runs the agent's CLI with its usual tools, continuing the same
+session. The buffer you asked from changes only through the agent's reply,
+since it may have unsaved edits; other open files the agent changes are
+reloaded, unless they have unsaved changes.
+
+  agent       runs                                      thinking
+  "claude"    claude --print --permission-mode           low ... max
+              acceptEdits
+  "codex"     codex exec --sandbox workspace-write       minimal ... high
+  "opencode"  opencode run --auto                        n/a
+  "pi"        pi --print --tools +codemode               off ... xhigh
+
+A custom agent is a function from a request to a command: >lua
+
+    agent = function(request)
+      -- request: system_prompt, prompt, model, thinking, args, session
+      return { argv = { "my-agent" }, stdin = request.prompt }
+    end
+<
+It must print the reply, one JSON object, on stdout.
+
+"axo" hands requests to an Axo Session's agent, which edits files itself;
+agent-mode reloads the buffer afterwards.
+
+==============================================================================
+7. LUA IN NEOVIM                                              *agent-mode-lua*
+
+For what only Neovim has (language servers, unsaved buffers, windows,
+plugins), the agent can send Lua that agent-mode runs; what it returns goes
+back to the agent for its next step. By default you see the code first:
+`y` runs it, `a` runs it and the rest of the request's Lua, `n` skips it.
+The code runs with your editor's permissions.
+
+The code gets `ctx` (bufnr, win, row, col, file, filetype, selection,
+instruction, async), `describe(topic)` to discover what this Neovim has, and
+helpers in `am`: `am.scratch()`, `am.lsp()`, `am.position_params()`,
+`am.lines()`.
+
+==============================================================================
+8. LUA API                                                    *agent-mode-api*
+
+require("agent_mode").setup({opts})                       *agent_mode.setup()*
+    Set the settings: {opts} over |vim.g.agent_mode| over the defaults.
+    Optional.
+
+require("agent_mode").configure({opts})               *agent_mode.configure()*
+    Change some settings, keeping the rest.
+
+require("agent_mode").run({instruction}, {opts})            *agent_mode.run()*
+    Run {instruction}. {opts}: `bufnr`, `position` ({row}, {col}),
+    `selection` ({start_row}, {end_row}), `on_done` (called with an error
+    or nil).
+
+require("agent_mode").prompt()                           *agent_mode.prompt()*
+    Open the prompt, as |<Plug>(AgentMode)| does.
+
+require("agent_mode").new_session()                 *agent_mode.new_session()*
+    Start a new conversation.
+
+==============================================================================
+9. HIGHLIGHTS                                          *agent-mode-highlights*
+
+AgentModeAnswer, AgentModeAnswerBorder, AgentModeAnswerTitle    answers
+AgentModeInput, AgentModeInputBorder, AgentModeInputTitle       the prompt
+AgentModeLuaBorder, AgentModeLuaTitle                     the Lua confirmation
+
+ vim:tw=78:ts=8:noet:ft=help:norl:

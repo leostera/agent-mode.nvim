@@ -115,6 +115,7 @@ end
 --- @param helpers table the `am` helpers, to describe them
 function M.describe(ctx, helpers, topic)
   if topic == nil then
+    local plugins = lazy_plugins()
     return {
       neovim = tostring(vim.version()),
       cwd = vim.fn.getcwd(),
@@ -122,9 +123,9 @@ function M.describe(ctx, helpers, topic)
       language_servers = vim.tbl_map(function(c)
         return c.name
       end, lsp_clients(ctx.bufnr)),
-      plugins = lazy_plugins() and vim.tbl_map(function(p)
+      plugins = plugins and vim.tbl_map(function(p)
         return p.name
-      end, lazy_plugins()) or nil,
+      end, plugins) or nil,
       helpers = M.describe(ctx, helpers, "am"),
       topics = TOPICS,
     }

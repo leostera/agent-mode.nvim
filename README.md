@@ -17,7 +17,7 @@ When you are reading code and something is unclear, or you know exactly what
 change you want, switching to a chat window means copying context, explaining
 where you are, and copying the result back. agent-mode skips all of that:
 
-- **Ask where you are.** Put the cursor on a line, press `<leader>a`, type a
+- **Ask where you are.** Put the cursor on a line, press your key, type a
   question. The agent sees the file, your cursor, your selection, the
   diagnostics on the line, and what your language server can do there.
 - **Read the answer in context.** It renders as Markdown right under the line,
@@ -64,13 +64,25 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 ```lua
 {
   "leostera/agent-mode.nvim",
+  keys = {
+    { "<leader>a", "<Plug>(AgentMode)", mode = { "n", "x" }, desc = "Ask the agent" },
+  },
   opts = {
     agent = "claude", -- "claude", "codex", "opencode", or "pi"
   },
 }
 ```
 
-Then put the cursor somewhere, press `<leader>a`, and type.
+agent-mode maps no keys on its own: map `<Plug>(AgentMode)` to whatever you
+like. Without lazy.nvim, install it any way you like and add:
+
+```lua
+vim.keymap.set({ "n", "x" }, "<leader>a", "<Plug>(AgentMode)")
+vim.g.agent_mode = { agent = "claude" } -- optional; no setup() call needed
+```
+
+Then put the cursor somewhere, press your key, and type. `:checkhealth
+agent_mode` checks your setup, and `:h agent-mode` has the full docs.
 
 ## Pick your agent
 
@@ -108,7 +120,7 @@ point at it with `cmd = vim.fn.expand("~/.local/bin/claude")`.
 
 | Key | Where | What |
 | --- | --- | --- |
-| `<leader>a` | normal, visual | Ask about, or change, the code at the cursor (or the selection) |
+| your `<Plug>(AgentMode)` key | normal, visual | Ask about, or change, the code at the cursor (or the selection) |
 | `<CR>` | on a line with an answer | Step into the answer to scroll, select, and yank; `q` to go back |
 | `]a` / `[a` | while answers are shown | Jump to the next / previous answer |
 | `<Esc>` | while answers are shown | Dismiss the answer nearest the cursor |
@@ -116,20 +128,21 @@ point at it with `cmd = vim.fn.expand("~/.local/bin/claude")`.
 The answer keys exist only in buffers that show an answer, so they do not
 change your mappings anywhere else.
 
-Commands:
+One command, `:AgentMode`, with completion for its subcommands:
 
-- `:AgentMode [instruction]`: run an instruction, or open the prompt
-- `:AgentModeAgent [name]`: show or switch the agent, with completion
-- `:AgentModeCancel`: stop the requests on the cursor line, or all of them
-- `:AgentModeDismiss[!]`: clear the answer nearest the cursor (all with `!`)
-- `:AgentModeConfig`: a menu to change the agent, model, thinking, Lua,
+- `:AgentMode`: open the prompt
+- `:AgentMode ask {instruction}`: run an instruction at the cursor
+- `:AgentMode cancel`: stop the requests on the cursor line, or all of them
+- `:AgentMode dismiss[!]`: clear the answer nearest the cursor (all with `!`)
+- `:AgentMode agent [name]`: show or switch the agent
+- `:AgentMode config`: a menu to change the agent, model, thinking, Lua,
   conversation, and prompt settings, start a new conversation, or copy your
   settings as Lua for your config. It is drawn by
   [snacks.nvim](https://github.com/folke/snacks.nvim)'s picker, so every list
   is fuzzy-searchable (pi's models, for one); without snacks it falls back to
   `vim.ui.select`
-- `:AgentModeNew`: start a new conversation with the agent
-- `:AgentModeLog`: show the last prompt, command, session, and raw reply
+- `:AgentMode new`: start a new conversation with the agent
+- `:AgentMode log`: show the last prompt, command, session, and raw reply
 
 ## One conversation per Neovim
 
@@ -141,7 +154,7 @@ second one". Each request still shows the agent the buffer as it is now.
 The session starts with your first request. It lives in your agent's own
 history, so you can open it there later (`claude --resume`, `pi --resume`,
 `codex resume`, `opencode`), and it ends when you quit Neovim or run
-`:AgentModeNew`.
+`:AgentMode new`.
 
 So that each reply lands in the right place in the conversation, requests in a
 session run one at a time: a request asked while another is running shows
@@ -196,17 +209,19 @@ steer the agent.
 
 ## Configuration
 
-Everything is optional; these are the defaults.
+Everything is optional, and no `setup()` call is needed. Set `vim.g.agent_mode`
+(a table, or a function returning one) anywhere in your config, or pass the
+same table to `setup()` (lazy.nvim's `opts` does that). These are the
+defaults:
 
 ```lua
-require("agent_mode").setup({
+vim.g.agent_mode = {
   agent = "pi",            -- "claude", "codex", "opencode", "pi", or a function
   cmd = nil,               -- path to the agent's executable
   model = nil,             -- nil: the agent's default
   thinking = nil,          -- reasoning level, passed to the agent
   system_prompt = nil,     -- your own instructions, added to agent-mode's
   args = {},               -- extra CLI arguments for the agent
-  keymap = "<leader>a",    -- normal and visual mode; false to skip
   input = "cursor",        -- "cursor": prompt below the cursor; "cmdline": vim.ui.input
   answer_keymaps = { enter = "<CR>", dismiss = "<Esc>", next = "]a", prev = "[a" },
   max_lines = 2000,        -- longer buffers are sent as a window around the cursor
@@ -216,14 +231,16 @@ require("agent_mode").setup({
   lua_timeout_ms = 10000,  -- how long its asynchronous Lua may take
   max_turns = 8,           -- replies per request; each round of Lua is one
   session = true,          -- one conversation for every request from this Neovim
-})
+}
 ```
+
+Typos and unknown keys show up in `:checkhealth agent_mode`.
 
 Change settings while Neovim runs; `configure()` keeps everything you do not
 pass:
 
 ```vim
-:AgentModeAgent codex
+:AgentMode agent codex
 :lua require("agent_mode").configure({ model = "opus", thinking = "high" })
 :lua require("agent_mode").configure({ system_prompt = "Prefer small, idiomatic changes." })
 ```
@@ -281,6 +298,10 @@ opts = {
 ```
 
 ## Development
+
+`make test` runs the unit and integration tests in headless Neovim, and
+`make typecheck` checks the LuaCATS types with lua-language-server; CI runs
+both.
 
 ```sh
 make test                                  # unit + integration tests

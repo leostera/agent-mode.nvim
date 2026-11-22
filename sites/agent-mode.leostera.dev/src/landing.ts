@@ -33,6 +33,7 @@ const OTHERS: { name: string; url: string; how: string }[] = [
 
 const SPEC = `{
   "leostera/agent-mode.nvim",
+  keys = { { "<leader>a", "<Plug>(AgentMode)", mode = { "n", "x" } } },
   opts = { agent = "claude" }, -- "codex", "opencode", "pi"
 }`;
 

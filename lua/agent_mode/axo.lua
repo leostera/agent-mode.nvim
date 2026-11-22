@@ -195,7 +195,7 @@ function M.run(opts, on_done)
             opts.on_progress("waiting for the session's agent…")
           end)
         end
-        timer = vim.uv.new_timer()
+        timer = assert(vim.uv.new_timer())
         timer:start(POLL_MS, POLL_MS, vim.schedule_wrap(function()
           if stopped then
             return

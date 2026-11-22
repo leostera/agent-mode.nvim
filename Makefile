@@ -1,4 +1,4 @@
-.PHONY: test test-live
+.PHONY: test test-live typecheck
 
 # Unit and integration tests. The language server tests run when
 # lua-language-server is on PATH or installed by mason.
@@ -11,3 +11,10 @@ test:
 AGENTS ?= pi
 test-live:
 	AGENT_MODE_LIVE=$(AGENTS) nvim --headless -l tests/live_spec.lua
+
+# Type-check lua/ and plugin/ with lua-language-server against Neovim's
+# runtime (LuaCATS annotations).
+LUA_LS ?= lua-language-server
+typecheck:
+	VIMRUNTIME=$$(nvim --clean --headless -c 'lua io.stdout:write(vim.env.VIMRUNTIME)' +qa) \
+	  $(LUA_LS) --check . --checklevel=Warning --configpath=.luarc.json

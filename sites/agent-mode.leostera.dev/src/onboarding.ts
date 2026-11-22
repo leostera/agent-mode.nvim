@@ -25,21 +25,25 @@ With lazy.nvim, add a spec next to their other plugins:
 \`\`\`lua
 {
   "leostera/agent-mode.nvim",
+  keys = {
+    { "<leader>a", "<Plug>(AgentMode)", mode = { "n", "x" }, desc = "Ask the agent" },
+  },
   opts = {
     agent = "claude", -- "claude", "codex", "opencode", or "pi"
   },
 }
 \`\`\`
 
-With another manager, install \`leostera/agent-mode.nvim\` and call \`require("agent_mode").setup({ agent = "claude" })\`.
+With another manager, install \`leostera/agent-mode.nvim\` and add \`vim.keymap.set({ "n", "x" }, "<leader>a", "<Plug>(AgentMode)")\` and \`vim.g.agent_mode = { agent = "claude" }\`. No \`setup()\` call is needed.
 
-Options worth knowing:
+The plugin maps no keys itself. Pick a key for \`<Plug>(AgentMode)\` that does not clash with an existing mapping.
 
-- \`keymap\` (default \`"<leader>a"\`): pick another if it clashes with an existing mapping.
+Settings worth knowing:
+
 - \`cmd\`: the full path to the agent CLI when it is not on Neovim's PATH, common when Neovim starts from a GUI. For Claude Code installed locally: \`vim.fn.expand("~/.local/bin/claude")\`.
 - \`model\` and \`thinking\`: in the format the agent expects.
 
 ## Verify
 
-Run \`nvim --headless +'lua require("agent_mode")' +q\` and check it exits without errors. Then tell the user: put the cursor on a line, press the keymap, and type a question or an instruction. \`:AgentModeLog\` shows the last prompt and reply if something looks off.
+Run \`nvim --headless +'checkhealth agent_mode' +'w! /dev/stdout' +qa\` and fix any errors it reports. Then tell the user: put the cursor on a line, press the key, and type a question or an instruction. \`:AgentMode log\` shows the last prompt and reply if something looks off, and \`:h agent-mode\` has the docs.
 `;

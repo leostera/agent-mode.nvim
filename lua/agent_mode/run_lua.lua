@@ -248,7 +248,7 @@ function M.run(code, ctx, timeout_ms, on_done)
   if not pending then
     return finish({ value = value })
   end
-  timer = vim.uv.new_timer()
+  timer = assert(vim.uv.new_timer())
   timer:start(timeout_ms, 0, function()
     finish({ error = string.format("ctx.async() was called but done() was not, after %d ms", timeout_ms) })
   end)

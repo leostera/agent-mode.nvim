@@ -250,9 +250,36 @@ H.test("configure changes only what it is given, at runtime", function()
   H.truthy(not pcall(agent_mode.configure, { agent = "clippy" }))
   H.eq("codex", agent_mode.config.agent)
 
-  vim.cmd("silent AgentModeAgent pi")
+  vim.cmd("silent AgentMode agent pi")
   H.eq("pi", agent_mode.config.agent)
-  H.eq({ "pi", "claude", "codex", "opencode", "axo" }, vim.fn.getcompletion("AgentModeAgent ", "cmdline"))
+  agent_mode.setup({ keymap = false })
+end)
+
+H.test(":AgentMode has subcommands, each completed", function()
+  H.eq({ "agent", "ask", "cancel", "config", "dismiss", "log", "new" }, vim.fn.getcompletion("AgentMode ", "cmdline"))
+  H.eq({ "claude", "codex" }, vim.fn.getcompletion("AgentMode agent c", "cmdline"))
+  H.eq({ "pi", "claude", "codex", "opencode", "axo" }, vim.fn.getcompletion("AgentMode agent ", "cmdline"))
+  H.truthy(vim.fn.maparg("<Plug>(AgentMode)", "n") ~= "", "<Plug>(AgentMode) is mapped in normal mode")
+  H.truthy(vim.fn.maparg("<Plug>(AgentMode)", "x") ~= "", "and in visual mode")
+end)
+
+H.test("settings work without setup: defaults, then vim.g.agent_mode", function()
+  local settings = require("agent_mode.config")
+  vim.g.agent_mode = { agent = "codex", modle = "typo", answer_keymaps = { enterr = "x" } }
+  H.eq({ "answer_keymaps.enterr", "modle" }, settings.unknown_keys(settings.from_globals()))
+  local agent_mode = require("agent_mode")
+  agent_mode.setup()
+  H.eq("codex", agent_mode.config.agent, "vim.g.agent_mode is read")
+  agent_mode.setup({ agent = "claude" })
+  H.eq("claude", agent_mode.config.agent, "setup() wins over vim.g.agent_mode")
+  vim.g.agent_mode = function()
+    return { agent = "opencode" }
+  end
+  agent_mode.setup()
+  H.eq("opencode", agent_mode.config.agent, "vim.g.agent_mode can be a function")
+  vim.g.agent_mode = nil
+  H.contains(settings.check(vim.tbl_extend("force", settings.defaults, { lua = "sometimes" })), "lua")
+  H.contains(settings.check(vim.tbl_extend("force", settings.defaults, { max_turns = "8" })), "max_turns")
   agent_mode.setup({ keymap = false })
 end)
 

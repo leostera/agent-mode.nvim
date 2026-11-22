@@ -133,7 +133,7 @@ local function system_prompt_file(text)
 end
 
 local function uuid()
-  local bytes = vim.uv.random(16)
+  local bytes = assert(vim.uv.random(16))
   local hex = bytes:gsub(".", function(c)
     return string.format("%02x", c:byte())
   end)

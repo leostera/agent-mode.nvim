@@ -31,80 +31,17 @@ local spinner = require("agent_mode.spinner")
 
 local M = {}
 
-local defaults = {
-  -- Which agent answers:
-  --   "pi", "claude", "codex", "opencode", or a function(request) returning
-  --     { argv, stdin } (see lua/agent_mode/agents.lua): a fresh agent per
-  --     request, without tools, replies with JSON actions that agent-mode
-  --     applies to the buffer.
-  --   "axo": the agent of an Axo Session (see `axo` below) gets the request
-  --     and edits the file itself; agent-mode reloads the buffer afterwards.
-  agent = "pi",
-  -- Path to the agent's executable, when it is not on Neovim's PATH.
-  cmd = nil,
-  axo = {
-    -- The Session to send requests to: "self" is the Session Neovim runs in.
-    session = "self",
-    -- The axo CLI.
-    cmd = "axo",
-    -- The session's agent works with tools and may take a while.
-    timeout_ms = 600000,
-  },
-  -- Model to ask for, or nil for the agent's own default.
-  model = nil,
-  -- Reasoning level, passed through to the agent (pi: off..xhigh, codex:
-  -- minimal..high). nil uses agent-mode's per-agent default: pi "off",
-  -- codex "low", since edits at the cursor should be quick.
-  thinking = nil,
-  -- Your own instructions, appended to agent-mode's system prompt. The JSON
-  -- reply format always stays in place.
-  system_prompt = nil,
-  -- Extra command-line arguments for the agent.
-  args = {},
-  -- Normal and visual mode mapping that opens the prompt; false to skip.
-  keymap = "<leader>a",
-  -- Where the prompt opens: "cursor" for a small window right below the
-  -- cursor, or "cmdline" for vim.ui.input (the command line, or whatever
-  -- UI plugin replaces it).
-  input = "cursor",
-  -- Normal mode keys mapped in a buffer while it shows answers: open the
-  -- answer on the cursor line to move through and yank from (elsewhere the
-  -- key does what it always does), dismiss the answer nearest the cursor,
-  -- and jump to the next or previous one. false skips a key.
-  answer_keymaps = { enter = "<CR>", dismiss = "<Esc>", next = "]a", prev = "[a" },
-  -- Buffers longer than this are sent as a window around the cursor.
-  max_lines = 2000,
-  -- How long to wait for language servers to list code actions.
-  code_action_timeout_ms = 1000,
-  -- How long to wait for each reply from the agent before giving up.
-  timeout_ms = 120000,
-  -- Whether the agent may run Lua in Neovim to look things up (references,
-  -- the call hierarchy, other files) and show them (tabs, splits, quickfix).
-  -- What the code returns goes back to the agent for its next step.
-  --   "confirm": show the code and ask first (y run, a run all for this
-  --     request, n skip)
-  --   "allow": run it without asking
-  --   false: the agent is not offered Lua
-  lua = "confirm",
-  -- How long Lua that called ctx.async() may take to call done().
-  lua_timeout_ms = 10000,
-  -- How many replies a request may take; each round of Lua is one more.
-  max_turns = 8,
-  -- Send every request from this Neovim to one conversation with the agent,
-  -- so you can refer to earlier questions, answers and results. Requests
-  -- then run one at a time, in order. :AgentModeNew starts a fresh one.
-  -- false runs each request on its own, all at once.
-  session = true,
-}
+local settings = require("agent_mode.config")
+local defaults = settings.defaults
 
-M.config = vim.deepcopy(defaults)
 M.defaults = defaults
 
---- The most recent request's log, for :AgentModeLog.
+--- The most recent request's log, for :AgentMode log.
 M.last = nil
 
 local requests = {} -- running requests, in the order they were asked
-local session = nil -- the conversation requests continue: { agent, id, started }
+---@type { agent: agent_mode.AgentName|function, id: string|nil, started: boolean }|nil
+local session = nil -- the conversation requests continue
 local session_queue = {} -- requests waiting for the session
 local session_busy = false
 local axo_queue = {} -- delegated requests waiting for the one in flight
@@ -270,7 +207,7 @@ local function start_timeout(request, timeout_ms)
     request.timer:stop()
     request.timer:close()
   end
-  request.timer = vim.uv.new_timer()
+  request.timer = assert(vim.uv.new_timer())
   request.timer:start(timeout_ms, 0, vim.schedule_wrap(function()
     finish(request, string.format("agent timed out after %d ms", timeout_ms))
   end))
@@ -588,6 +525,7 @@ start_agent = function(request)
   if not ok then
     return finish(request, "could not start the agent: " .. tostring(process))
   end
+  ---@cast process vim.SystemObj
   request.stop = function()
     process:kill(15)
   end
@@ -635,6 +573,7 @@ local function sync_from_disk(bufnr)
   local hunks = vim.text.diff(table.concat(current, "\n") .. "\n", table.concat(disk, "\n") .. "\n", {
     result_type = "indices",
   })
+  ---@cast hunks integer[][]
   for i = #hunks, 1, -1 do
     local start_a, count_a, start_b, count_b = unpack(hunks[i])
     local replacement = vim.list_slice(disk, start_b, start_b + count_b - 1)
@@ -918,11 +857,13 @@ local function build_config(base, opts)
   local config = vim.tbl_deep_extend("force", vim.deepcopy(base), opts)
   -- Lists merge index by index; given args replace the old ones.
   config.args = opts.args or config.args
-  if config.agent ~= "axo" then
-    local _, err = agents.resolve(config.agent)
-    if err then
-      error("agent-mode: " .. err, 3)
-    end
+  local err = settings.check(config)
+  if err then
+    error("agent-mode: " .. err, 3)
+  end
+  local unknown = settings.unknown_keys(opts)
+  if #unknown > 0 then
+    notify("unknown settings, ignored: " .. table.concat(unknown, ", "), vim.log.levels.WARN)
   end
   return config
 end
@@ -935,21 +876,26 @@ local function apply(config)
     mapped_keymap = nil
   end
   if config.keymap and config.keymap ~= mapped_keymap then
-    vim.keymap.set({ "n", "x" }, config.keymap, M.prompt, { desc = "agent-mode: ask the agent" })
+    vim.deprecate("agent-mode's `keymap` setting", 'vim.keymap.set({ "n", "x" }, "<key>", "<Plug>(AgentMode)")', "1.0", "agent-mode", false)
+    vim.keymap.set({ "n", "x" }, config.keymap, "<Plug>(AgentMode)", { desc = "agent-mode: ask the agent" })
     mapped_keymap = config.keymap
   end
   M.config = config
 end
 
---- Configure agent-mode from scratch: `opts` over the defaults.
+--- Set agent-mode's settings: `opts` over `vim.g.agent_mode` over the
+--- defaults. Optional: without it the plugin uses `vim.g.agent_mode` and the
+--- defaults. Only configures; nothing else is started.
+---@param opts agent_mode.Config|nil
 function M.setup(opts)
-  apply(build_config(defaults, opts or {}))
+  apply(build_config(defaults, vim.tbl_deep_extend("force", settings.from_globals(), opts or {})))
 end
 
 --- Change some settings at runtime, keeping the rest, e.g.
 ---   require("agent_mode").configure({ agent = "axo" })
 ---   require("agent_mode").configure({ model = "sonnet", thinking = "low" })
 --- Running requests keep the settings they started with.
+---@param opts agent_mode.Config|nil
 function M.configure(opts)
   apply(build_config(M.config, opts or {}))
   if M.config.agent == "axo" and M.config.axo.session == "self" and not vim.env.AXO_SESSION_ID then
@@ -962,7 +908,10 @@ function M.open_config()
   return require("agent_mode.config_ui").open()
 end
 
---- The agents :AgentModeAgent can switch to.
+--- The agents `:AgentMode agent` can switch to.
 M.agent_names = vim.list_extend(vim.deepcopy(agents.presets), { "axo" })
+
+-- Start from the defaults and vim.g.agent_mode; setup() is optional.
+apply(build_config(defaults, settings.from_globals()))
 
 return M

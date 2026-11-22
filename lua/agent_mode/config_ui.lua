@@ -1,4 +1,4 @@
--- :AgentModeConfig: the settings you change most, as a menu.
+-- :AgentMode config: the settings you change most, as a menu.
 --
 -- Menus and text entry are drawn by snacks.nvim (a dependency in lazy.lua):
 -- a fuzzy-searchable picker and an input box. Without snacks they fall back
@@ -89,7 +89,7 @@ function M.snippet()
   local config = agent_mode().config
   local defaults = agent_mode().defaults
   local lines = { 'require("agent_mode").setup({' }
-  for _, key in ipairs({ "agent", "model", "thinking", "lua", "session", "input", "keymap" }) do
+  for _, key in ipairs({ "agent", "model", "thinking", "lua", "session", "input" }) do
     local value = config[key]
     if type(value) ~= "function" and not vim.deep_equal(value, defaults[key]) then
       lines[#lines + 1] = string.format("  %s = %s,", key, vim.inspect(value))
