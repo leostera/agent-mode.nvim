@@ -235,6 +235,21 @@ function M.enter()
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = "markdown"
 
+  -- Make room under the answer's line: scroll it to the top when the answer
+  -- doesn't fit below it, then size the window to the space that is left so
+  -- it covers the inline answer instead of being pushed up over the code.
+  local function space_below()
+    local screen_row = vim.fn.screenpos(code_win, row, 1).row
+    local win_top = vim.api.nvim_win_get_position(code_win)[1]
+    return vim.api.nvim_win_get_height(code_win) - (screen_row - win_top)
+  end
+  if space_below() < #lines then
+    vim.api.nvim_win_call(code_win, function()
+      vim.cmd("normal! zt")
+    end)
+  end
+  local height = math.max(1, math.min(#lines, space_below()))
+
   local info = vim.fn.getwininfo(code_win)[1]
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "win",
@@ -244,7 +259,7 @@ function M.enter()
     col = 0,
     -- The text area, less the border and the blank column after it.
     width = math.max(info.width - info.textoff - 2, 10),
-    height = #lines,
+    height = height,
     border = { "", "", "", "", "", "", "", { "│", "AgentModeAnswerBorder" } },
     style = "minimal",
     zindex = 10,

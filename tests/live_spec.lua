@@ -1,6 +1,6 @@
 -- Live tests against real agents and models. They cost tokens and take
 -- seconds, so they only run when asked:
---   AGENT_MODE_LIVE=pi,codex nvim --headless -l tests/live_spec.lua
+--   AGENT_MODE_LIVE=pi,claude,codex,opencode nvim --headless -l tests/live_spec.lua
 -- "axo" delegates to the Axo Session AGENT_MODE_AXO_SESSION, whose agent must
 -- be able to edit files in AGENT_MODE_AXO_DIR (default: a temp dir).
 
@@ -36,7 +36,7 @@ end, live)) do
 end
 
 for _, agent in ipairs(vim.tbl_filter(function(a)
-  return a ~= "codex"
+  return a ~= "codex" and a ~= "opencode"
 end, live)) do
   H.test(agent .. ": a question is answered inline and the code is left alone", function()
     local opts = { agent = agent, keymap = false }

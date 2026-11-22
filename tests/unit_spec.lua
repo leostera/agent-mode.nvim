@@ -167,6 +167,39 @@ H.test("the codex agent runs read-only and puts the system prompt on stdin", fun
   H.contains(command.stdin, "PROMPT")
 end)
 
+H.test("the claude agent runs without tools or a saved session", function()
+  local command = agents.claude(request)
+  local argv = table.concat(command.argv, " ")
+  H.contains(argv, "claude --print --output-format text --tools  --no-session-persistence --strict-mcp-config")
+  H.contains(argv, "--model some-model --effort high --extra --system-prompt-file ")
+  H.eq({ "SYSTEM" }, vim.fn.readfile(command.argv[#command.argv]))
+  H.eq("PROMPT", command.stdin)
+end)
+
+H.test("the opencode agent uses the read-only plan agent", function()
+  local command = agents.opencode(request)
+  H.eq({ "opencode", "run", "--agent", "plan", "--model", "some-model", "--extra" }, command.argv)
+  H.contains(command.stdin, "SYSTEM")
+  H.contains(command.stdin, "PROMPT")
+end)
+
+H.test("cmd replaces the agent's executable", function()
+  local agent_mode = require("agent_mode")
+  agent_mode.setup({ keymap = false, agent = "claude", cmd = "/opt/bin/claude" })
+  local captured
+  local system = vim.system
+  vim.system = function(argv)
+    captured = argv
+    error("stop here")
+  end
+  H.buffer({ "x" })
+  local err = H.run_agent("anything", { position = { row = 1, col = 0 } })
+  vim.system = system
+  H.eq("/opt/bin/claude", captured[1])
+  H.contains(err, "could not start the agent")
+  agent_mode.setup({ keymap = false })
+end)
+
 H.test("agents default to quick reasoning when thinking is unset", function()
   local quick = { system_prompt = "SYSTEM", prompt = "PROMPT", args = {} }
   H.contains(table.concat(agents.pi(quick).argv, " "), "--thinking off")
@@ -194,7 +227,7 @@ H.test("configure changes only what it is given, at runtime", function()
 
   vim.cmd("silent AgentModeAgent pi")
   H.eq("pi", agent_mode.config.agent)
-  H.eq({ "pi", "codex", "axo" }, vim.fn.getcompletion("AgentModeAgent ", "cmdline"))
+  H.eq({ "pi", "claude", "codex", "opencode", "axo" }, vim.fn.getcompletion("AgentModeAgent ", "cmdline"))
   agent_mode.setup({ keymap = false })
 end)
 
@@ -307,6 +340,31 @@ H.test("answers are highlighted as Markdown, with code blocks in their language"
   H.eq({ "Base", "@markup.raw.markdown_inline" }, answer.highlight(lines, "Base")[1][2][2])
 end)
 
+H.test("a long answer is entered without covering its line", function()
+  local lines = {}
+  for i = 1, 60 do
+    lines[i] = "line " .. i
+  end
+  local buf = H.buffer(lines)
+  local code_win = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_height(code_win, 20)
+  local body = {}
+  for i = 1, 40 do
+    body[i] = "answer line " .. i
+  end
+  answer.show(buf, 15, table.concat(body, "\n"), { title = "long", keys = {} })
+  vim.api.nvim_win_set_cursor(code_win, { 15, 0 })
+  vim.cmd("normal! zb")
+  local win = answer.enter()
+  H.truthy(win, "entered")
+  local anchor = vim.fn.screenpos(code_win, 15, 1).row
+  H.truthy(anchor > 0, "the answer's line is still on screen")
+  H.eq(anchor, vim.api.nvim_win_get_position(win)[1], "the window starts below the line")
+  H.truthy(vim.api.nvim_win_get_height(win) < 41, "the window fits the space left and scrolls")
+  vim.api.nvim_win_close(win, true)
+  answer.dismiss(buf)
+end)
+
 H.test("answers show below their line and dismiss nearest first", function()
   local buf = H.buffer({ "1", "2", "3", "4", "5", "6" })
   local keys = { dismiss = "<Esc>", next = "]a", prev = "[a" }
@@ -362,6 +420,11 @@ H.test("<CR> on an answer's line opens it for the cursor; elsewhere it is <CR>",
   vim.api.nvim_win_set_cursor(win, { 5, 0 })
   vim.cmd("normal! yy")
   H.eq("return 2\n", vim.fn.getreg('"'))
+
+  -- The window starts right under the answer's line and does not cover it.
+  local position = vim.api.nvim_win_get_position(win)[1]
+  local anchor = vim.fn.screenpos(code_win, 2, 1).row
+  H.eq(anchor, position, "the answer window sits right below its line")
 
   -- q goes back to the code, and the answer is still shown inline.
   vim.api.nvim_feedkeys("q", "x", false)

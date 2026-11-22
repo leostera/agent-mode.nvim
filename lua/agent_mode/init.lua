@@ -22,6 +22,7 @@ local answer = require("agent_mode.answer")
 local axo = require("agent_mode.axo")
 local context = require("agent_mode.context")
 local edits = require("agent_mode.edits")
+local input = require("agent_mode.input")
 local lsp = require("agent_mode.lsp")
 local protocol = require("agent_mode.protocol")
 local spinner = require("agent_mode.spinner")
@@ -30,12 +31,15 @@ local M = {}
 
 local defaults = {
   -- Which agent answers:
-  --   "pi", "codex", or a function(request) returning { argv, stdin }
-  --     (see lua/agent_mode/agents.lua): a fresh agent per request replies
-  --     with JSON actions that agent-mode applies to the buffer.
+  --   "pi", "claude", "codex", "opencode", or a function(request) returning
+  --     { argv, stdin } (see lua/agent_mode/agents.lua): a fresh agent per
+  --     request, without tools, replies with JSON actions that agent-mode
+  --     applies to the buffer.
   --   "axo": the agent of an Axo Session (see `axo` below) gets the request
   --     and edits the file itself; agent-mode reloads the buffer afterwards.
   agent = "pi",
+  -- Path to the agent's executable, when it is not on Neovim's PATH.
+  cmd = nil,
   axo = {
     -- The Session to send requests to: "self" is the Session Neovim runs in.
     session = "self",
@@ -57,6 +61,10 @@ local defaults = {
   args = {},
   -- Normal and visual mode mapping that opens the prompt; false to skip.
   keymap = "<leader>a",
+  -- Where the prompt opens: "cursor" for a small window right below the
+  -- cursor, or "cmdline" for vim.ui.input (the command line, or whatever
+  -- UI plugin replaces it).
+  input = "cursor",
   -- Normal mode keys mapped in a buffer while it shows answers: open the
   -- answer on the cursor line to move through and yank from (elsewhere the
   -- key does what it always does), dismiss the answer nearest the cursor,
@@ -115,6 +123,9 @@ local function agent_command(prompt)
   end
   if type(command) ~= "table" or type(command.argv) ~= "table" or #command.argv == 0 then
     return nil, "the agent function must return { argv = {...}, stdin = \"...\" }"
+  end
+  if M.config.cmd then
+    command.argv[1] = M.config.cmd
   end
   return command
 end
@@ -571,7 +582,7 @@ function M.prompt()
   end
   local cursor = vim.api.nvim_win_get_cursor(0)
   local bufnr = vim.api.nvim_get_current_buf()
-  vim.ui.input({ prompt = "Agent: " }, function(instruction)
+  local function submit(instruction)
     if instruction then
       M.run(instruction, {
         bufnr = bufnr,
@@ -579,7 +590,12 @@ function M.prompt()
         selection = selection,
       })
     end
-  end)
+  end
+  if M.config.input == "cmdline" then
+    vim.ui.input({ prompt = agent_name() .. ": " }, submit)
+  else
+    input.open({ title = "ask " .. agent_name() }, submit)
+  end
 end
 
 --- Clear the inline answer nearest the cursor, or all of them with `all`.
@@ -660,6 +676,6 @@ function M.configure(opts)
 end
 
 --- The agents :AgentModeAgent can switch to.
-M.agent_names = { "pi", "codex", "axo" }
+M.agent_names = vim.list_extend(vim.deepcopy(agents.presets), { "axo" })
 
 return M

@@ -93,6 +93,14 @@ M.decoders["pi-json"] = function()
   }
 end
 
+--- Some agents take their system prompt as a file: pi kills itself when an
+--- argument is longer than about 1 KB with some extensions loaded.
+local function system_prompt_file(text)
+  local path = vim.fn.tempname()
+  vim.fn.writefile(vim.split(text, "\n", { plain = true }), path)
+  return path
+end
+
 --- pi (https://pi.dev). Takes the system prompt as a file and the request on
 --- stdin. The prompt goes through a file because some pi extensions kill the
 --- process when an argument is longer than about 1 KB.
@@ -114,9 +122,7 @@ function M.pi(request)
     vim.list_extend(argv, { "--model", request.model })
   end
   vim.list_extend(argv, request.args)
-  local system_prompt_file = vim.fn.tempname()
-  vim.fn.writefile(vim.split(request.system_prompt, "\n", { plain = true }), system_prompt_file)
-  vim.list_extend(argv, { "--system-prompt", system_prompt_file })
+  vim.list_extend(argv, { "--system-prompt", system_prompt_file(request.system_prompt) })
   return { argv = argv, stdin = request.prompt, output = "pi-json" }
 end
 
@@ -143,6 +149,46 @@ function M.codex(request)
   return { argv = argv, stdin = request.system_prompt .. "\n\n---\n\n" .. request.prompt }
 end
 
+--- Claude Code. No tools, no session saved, no MCP servers; the system
+--- prompt goes in a file and the request on stdin. `thinking` is passed as
+--- --effort (low, medium, high, xhigh, max).
+function M.claude(request)
+  local argv = {
+    "claude",
+    "--print",
+    "--output-format",
+    "text",
+    "--tools",
+    "",
+    "--no-session-persistence",
+    "--strict-mcp-config",
+  }
+  if request.model then
+    vim.list_extend(argv, { "--model", request.model })
+  end
+  if request.thinking then
+    vim.list_extend(argv, { "--effort", request.thinking })
+  end
+  vim.list_extend(argv, request.args)
+  vim.list_extend(argv, { "--system-prompt-file", system_prompt_file(request.system_prompt) })
+  return { argv = argv, stdin = request.prompt }
+end
+
+--- OpenCode, with its read-only "plan" agent so it cannot edit files. It has
+--- no system prompt flag, so the system prompt leads the request on stdin.
+--- `model` is OpenCode's provider/model.
+function M.opencode(request)
+  local argv = { "opencode", "run", "--agent", "plan" }
+  if request.model then
+    vim.list_extend(argv, { "--model", request.model })
+  end
+  vim.list_extend(argv, request.args)
+  return { argv = argv, stdin = request.system_prompt .. "\n\n---\n\n" .. request.prompt }
+end
+
+--- The preset names, for completion and errors.
+M.presets = { "pi", "claude", "codex", "opencode" }
+
 --- Resolve the configured agent: a preset name or a function.
 --- @return function|nil agent
 --- @return string|nil err
@@ -150,10 +196,11 @@ function M.resolve(agent)
   if type(agent) == "function" then
     return agent
   end
-  if type(agent) == "string" and type(M[agent]) == "function" and agent ~= "resolve" then
+  if type(agent) == "string" and vim.tbl_contains(M.presets, agent) then
     return M[agent]
   end
-  return nil, string.format("unknown agent %s; use \"pi\", \"codex\", or a function", vim.inspect(agent))
+  return nil,
+    string.format("unknown agent %s; use one of %s, or a function", vim.inspect(agent), table.concat(M.presets, ", "))
 end
 
 return M

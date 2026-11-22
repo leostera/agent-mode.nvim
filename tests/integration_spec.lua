@@ -42,6 +42,55 @@ H.test("an edit reply updates the buffer in place", function()
   H.contains(sent_prompt(), "agent-mode")
 end)
 
+H.test("the prompt opens right below the cursor and <CR> sends it", function()
+  local buf = H.buffer({ "local a = 1", "local b = 2", "local c = 3" }, "lua")
+  fake_agent({ actions = { { type = "message", text = "ok" } } })
+  agent_mode.configure({ keymap = "<F5>" })
+  local code_win = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_cursor(code_win, { 2, 6 })
+
+  -- Watch the prompt window as it opens.
+  local input = require("agent_mode.input")
+  local open = input.open
+  local seen = {}
+  input.open = function(opts, on_submit)
+    local win = open(opts, on_submit)
+    seen.win, seen.title = win, vim.api.nvim_win_get_config(win).title[1][1]
+    seen.top = vim.api.nvim_win_get_position(win)[1]
+    return win
+  end
+  local screen = vim.fn.screenpos(code_win, 2, 7)
+
+  -- Type it the way a user does: the key, the question, <CR>. Nothing is
+  -- lost, so the prompt is in insert mode as soon as it opens.
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<F5>what is b?<CR>", true, false, true), "xt", false)
+  input.open = open
+  H.truthy(seen.win and seen.win ~= code_win, "a prompt window opened")
+  H.eq(screen.row, seen.top, "its top border sits on the row below the cursor")
+  H.contains(seen.title, "ask agent")
+  H.eq(code_win, vim.api.nvim_get_current_win(), "back in the code")
+  vim.wait(50)
+  H.eq({ 2, 6 }, vim.api.nvim_win_get_cursor(code_win), "the cursor did not move")
+  H.truthy(vim.wait(5000, function()
+    return #agent_mode.requests() == 0 and agent_mode.last and agent_mode.last.instruction == "what is b?"
+  end, 20), "the request ran")
+  H.contains(sent_prompt(), "Instruction: what is b?")
+  H.contains(sent_prompt(), "Cursor: line 2")
+  agent_mode.dismiss(true)
+  H.eq({ "local a = 1", "local b = 2", "local c = 3" }, H.lines(buf))
+end)
+
+H.test("<Esc> in the prompt cancels without asking anything", function()
+  H.buffer({ "x" })
+  local code_win = vim.api.nvim_get_current_win()
+  local before = agent_mode.last
+  agent_mode.configure({ keymap = "<F5>" })
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<F5>never sent<Esc><Esc>", true, false, true), "xt", false)
+  H.eq(code_win, vim.api.nvim_get_current_win())
+  vim.wait(200)
+  H.eq(before, agent_mode.last, "no request was made")
+end)
+
 H.test("the user's system prompt is appended to the protocol", function()
   H.buffer({ "x" })
   fake_agent({ actions = { { type = "message", text = "ok" } } })

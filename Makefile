@@ -6,7 +6,8 @@ test:
 	nvim --headless -l tests/unit_spec.lua
 	nvim --headless -l tests/integration_spec.lua
 
-# Real agents and models; costs tokens. Pick agents with AGENTS=pi,codex.
+# Real agents and models; costs tokens. Pick agents with
+# AGENTS=claude,codex,opencode,pi (and axo with AGENT_MODE_AXO_SESSION set).
 AGENTS ?= pi
 test-live:
 	AGENT_MODE_LIVE=$(AGENTS) nvim --headless -l tests/live_spec.lua

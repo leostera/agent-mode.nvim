@@ -38,5 +38,5 @@ end, {
   complete = function()
     return require("agent_mode").agent_names
   end,
-  desc = "agent-mode: show or switch the agent (pi, codex, axo)",
+  desc = "agent-mode: show or switch the agent (pi, claude, codex, opencode, axo)",
 })
