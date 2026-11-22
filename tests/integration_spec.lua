@@ -561,6 +561,33 @@ H.test(":AgentModeConfig is a vim.ui.select menu that comes back after each chan
   H.eq('require("agent_mode").setup({\n  agent = "claude",\n  model = "opus",\n  thinking = "max",\n  lua = false,\n  session = false,\n  keymap = false,\n})', vim.fn.getreg('"'))
 end)
 
+H.test("files the agent changed on disk are reloaded, unless they have unsaved changes", function()
+  local dir = vim.fn.tempname()
+  vim.fn.mkdir(dir, "p")
+  local other, dirty = dir .. "/other.lua", dir .. "/dirty.lua"
+  vim.fn.writefile({ "local old = 1" }, other)
+  vim.fn.writefile({ "local a = 1" }, dirty)
+  vim.cmd("edit " .. vim.fn.fnameescape(other))
+  local other_buf = vim.api.nvim_get_current_buf()
+  vim.cmd("edit " .. vim.fn.fnameescape(dirty))
+  local dirty_buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(dirty_buf, 0, -1, false, { "local mine = 1" })
+  local here = H.buffer({ "x" }, "lua")
+  -- The "agent" rewrites both files, then answers.
+  local script = string.format(
+    "sleep 1.1; echo 'local new = 2' > %s; echo 'local theirs = 2' > %s; printf '%%s' '{\"actions\":[{\"type\":\"message\",\"text\":\"ok\"}]}'",
+    other, dirty
+  )
+  agent_mode.setup({ keymap = false, session = false, agent = function()
+    return { argv = { "sh", "-c", script }, stdin = "" }
+  end })
+  H.eq(nil, H.run_agent("change the other files", { bufnr = here, position = { row = 1, col = 0 } }))
+  H.eq({ "local new = 2" }, H.lines(other_buf), "reloaded")
+  H.eq({ "local mine = 1" }, H.lines(dirty_buf), "unsaved changes kept")
+  agent_mode.dismiss(true)
+  vim.cmd("bwipeout! " .. other_buf .. " " .. dirty_buf)
+end)
+
 H.test("lua results go back to the agent until it answers", function()
   local buf = H.buffer({ "local a = 1" }, "lua")
   local prompts = scripted_agent({

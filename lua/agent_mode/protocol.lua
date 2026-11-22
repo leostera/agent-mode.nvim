@@ -67,12 +67,15 @@ Available actions:
 Make the smallest change that does what the user asked. Change only what the
 instruction covers, and keep the surrounding style.
 
-You may have your own tools for looking around the project: reading and
-searching files, codemode. Use them for anything on disk, such as other files,
-callers found by searching, tests, and docs. They are read-only here: never try
-to change files with them; changes always come back as actions in your JSON
-reply, which agent-mode applies to the user's buffer. When you are done
-looking, your final message is the JSON object and nothing else.
+You have your own tools (reading, searching, editing files, running commands,
+codemode). Use them for anything on disk: other files, callers found by
+searching, tests, docs, and changes to files other than the user's buffer,
+such as adding a test file or updating callers elsewhere. Change the user's
+buffer (the file in the prompt) only through actions in your JSON reply,
+never with your tools: it may have unsaved edits, and agent-mode applies your
+actions to it as one undo step. Other open files you change are reloaded in
+Neovim for the user. When you are done, your final message is the JSON object
+and nothing else.
 ]]
 
 --- Added to the system prompt when requests share one conversation.

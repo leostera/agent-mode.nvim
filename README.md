@@ -74,19 +74,21 @@ Then put the cursor somewhere, press `<leader>a`, and type.
 
 ## Pick your agent
 
-agent-mode runs your agent's CLI once per request with read-only tools: the
-agent can read and search your project (pi also gets codemode), but it never
-writes files. It answers, and agent-mode applies the answer to your buffer. Each run continues the same
+agent-mode runs your agent's CLI once per request with its usual tools (pi
+also gets codemode), so it can read, search, and change your project. The
+buffer you asked from changes only through the agent's reply, which
+agent-mode applies as one undo step, since it may have unsaved edits; other
+open files the agent changes are reloaded for you. Each run continues the same
 session, so the agent remembers earlier requests (see
 [One conversation per Neovim](#one-conversation-per-neovim)). Your agent's own
 login, model access, and billing are used as they are.
 
 | Agent | `agent =` | How it runs | `thinking` |
 | --- | --- | --- | --- |
-| [Claude Code](https://docs.anthropic.com/claude-code) | `"claude"` | `claude --print --tools Read,Grep,Glob`, `--session-id`/`--resume`, no MCP servers | `--effort`: `low` … `max` |
-| [Codex](https://github.com/openai/codex) | `"codex"` | `codex exec --sandbox read-only`, then `codex exec resume <id>` | `model_reasoning_effort`: `minimal` … `high` (default `low`) |
-| [OpenCode](https://opencode.ai) | `"opencode"` | `opencode run --agent plan --session <id>` (read-only) | n/a |
-| [pi](https://pi.dev) | `"pi"` | `pi --print --tools read,grep,find,ls,codemode --session-id <id>` | `off` … `xhigh` (default `off`) |
+| [Claude Code](https://docs.anthropic.com/claude-code) | `"claude"` | `claude --print --permission-mode acceptEdits`, `--session-id`/`--resume`, no MCP servers | `--effort`: `low` … `max` |
+| [Codex](https://github.com/openai/codex) | `"codex"` | `codex exec --sandbox workspace-write`, then `codex exec resume <id>` | `model_reasoning_effort`: `minimal` … `high` (default `low`) |
+| [OpenCode](https://opencode.ai) | `"opencode"` | `opencode run --auto --session <id>` | n/a |
+| [pi](https://pi.dev) | `"pi"` | `pi --print --tools +codemode --session-id <id>` | `off` … `xhigh` (default `off`) |
 | anything else | a function | see [Custom agents](#custom-agents) | |
 
 Choose a model with `model`, in the format your agent expects:
@@ -153,8 +155,9 @@ Some requests need more than the file you are in: "show me the call graph
 starting here", "where else is this used?", "open the tests for this in a
 split". The agent splits the work:
 
-- **Its own tools** for anything on disk: it reads and searches your project
-  (with codemode in pi) the way it always does.
+- **Its own tools** for anything on disk: it reads, searches, and changes
+  other files in your project (with codemode in pi) the way it always does,
+  like adding a test file or updating callers elsewhere.
 - **Lua in your Neovim** for what only Neovim has: your language servers,
   unsaved buffers, windows and plugins, and showing you the result in a tab,
   a split, or the quickfix list.
@@ -258,7 +261,8 @@ end
    lines they replace are still exactly what the agent saw (after accounting
    for lines that moved), so a slow reply never clobbers what you typed.
 
-The agent never writes files itself, and every change is one undo step.
+The buffer you asked from only changes through the reply, as one undo step;
+files the agent changes with its own tools are reloaded in any open buffer.
 
 ## Hand requests to an agent session you already have open
 

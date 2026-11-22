@@ -26,10 +26,11 @@
 -- stream, which lets agent-mode show the agent's thinking and tools as they
 -- happen.
 --
--- Agents get their own read-only tools (reading and searching files, pi's
--- codemode) to look around the project, but nothing that writes: changes
--- come back as actions that agent-mode applies, and what needs Neovim
--- itself goes through the "lua" action.
+-- Agents get their usual tools (pi adds codemode), so they can look around
+-- the project and change other files themselves. Changes to the buffer the
+-- request came from come back as actions, since it may have unsaved edits;
+-- agent-mode reloads other open buffers whose files the agent changed, and
+-- what needs Neovim itself goes through the "lua" action.
 
 local M = {}
 
@@ -140,10 +141,6 @@ local function uuid()
 end
 M.uuid = uuid
 
---- pi's tools for looking around: reading and searching, and codemode to
---- script them. No bash, edit or write.
-M.pi_tools = "read,grep,find,ls,codemode"
-
 --- pi (https://pi.dev). Takes the system prompt as a file and the request on
 --- stdin. The prompt goes through a file because some pi extensions kill the
 --- process when an argument is longer than about 1 KB. --session-id creates
@@ -156,7 +153,7 @@ function M.pi(request)
     "--mode",
     "json",
     "--tools",
-    M.pi_tools,
+    "+codemode",
     "--no-context-files",
     "--no-skills",
     "--no-mcp",
@@ -177,7 +174,8 @@ function M.pi(request)
 end
 
 --- OpenAI Codex CLI. It has no system prompt flag, so the system prompt
---- leads the request on stdin. Runs read-only. A session starts with a plain
+--- leads the request on stdin. Its sandbox lets it write in the workspace.
+--- A session starts with a plain
 --- `codex exec`, which prints its id on stderr, and continues with
 --- `codex exec resume <id>`, which takes settings only as -c.
 function M.codex(request)
@@ -185,9 +183,9 @@ function M.codex(request)
   local resuming = session and session.started and session.id
   local argv = { "codex", "exec" }
   if resuming then
-    vim.list_extend(argv, { "resume", "--skip-git-repo-check", "-c", 'sandbox_mode="read-only"' })
+    vim.list_extend(argv, { "resume", "--skip-git-repo-check", "-c", 'sandbox_mode="workspace-write"' })
   else
-    vim.list_extend(argv, { "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never" })
+    vim.list_extend(argv, { "--skip-git-repo-check", "--sandbox", "workspace-write", "--color", "never" })
     if not session then
       argv[#argv + 1] = "--ephemeral"
     end
@@ -211,17 +209,16 @@ function M.codex(request)
   }
 end
 
---- Claude Code's tools for looking around: reading and searching files.
-M.claude_tools = "Read,Grep,Glob"
-
---- Claude Code. Read-only tools, no MCP servers; the system prompt goes in a file
+--- Claude Code. Its usual tools with file edits allowed (commands that
+--- need permission are refused, since nobody can answer in --print), no MCP
+--- servers; the system prompt goes in a file
 --- and the request on stdin. `thinking` is passed as --effort (low, medium,
 --- high, xhigh, max). A session starts with --session-id and continues with
 --- --resume, since --session-id refuses an id that exists.
 function M.claude(request)
   local session = request.session
   local session_id = session and (session.id or uuid())
-  local argv = { "claude", "--print", "--output-format", "text", "--tools", M.claude_tools, "--strict-mcp-config" }
+  local argv = { "claude", "--print", "--output-format", "text", "--permission-mode", "acceptEdits", "--strict-mcp-config" }
   if not session then
     argv[#argv + 1] = "--no-session-persistence"
   elseif session.started then
@@ -240,13 +237,14 @@ function M.claude(request)
   return { argv = argv, stdin = request.prompt, session_id = session_id }
 end
 
---- OpenCode, with its read-only "plan" agent so it cannot edit files. It has
---- no system prompt flag, so the system prompt leads the request on stdin.
---- `model` is OpenCode's provider/model. --session creates the session the
---- first time and continues it after; its ids look like ses_<26 characters>.
+--- OpenCode, with its default agent and its permissions auto-approved, since
+--- nobody can answer a prompt. It has no system prompt flag, so the system
+--- prompt leads the request on stdin. `model` is OpenCode's provider/model.
+--- --session creates the session the first time and continues it after; its
+--- ids look like ses_<26 characters>.
 function M.opencode(request)
   local session_id = request.session and (request.session.id or ("ses_" .. uuid():gsub("%-", ""):sub(1, 26)))
-  local argv = { "opencode", "run", "--agent", "plan" }
+  local argv = { "opencode", "run", "--auto" }
   if session_id then
     vim.list_extend(argv, { "--session", session_id })
   end

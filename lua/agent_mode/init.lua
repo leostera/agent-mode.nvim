@@ -209,6 +209,7 @@ local start_next_delegated -- defined with the Axo flow below
 local run_lua_action -- defined with the actions below
 local start_agent -- defined below; called again for each turn
 local start_next_in_session -- defined with start_agent
+local reload_changed -- defined with the Axo flow, next to sync_from_disk
 
 local function finish(request, err)
   if request.finished then
@@ -235,6 +236,9 @@ local function finish(request, err)
     pcall(request.stop)
   end
   request.spinner:stop()
+  if request.mtimes then
+    reload_changed(request.mtimes)
+  end
   request.log.error = err
   if err then
     notify(err, vim.log.levels.ERROR)
@@ -645,6 +649,42 @@ local function sync_from_disk(bufnr)
   vim.bo[bufnr].modified = false
 end
 
+--- When each open file was last written, to tell later which the agent
+--- changed.
+local function file_mtimes()
+  local mtimes = {}
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    local name = vim.api.nvim_buf_get_name(bufnr)
+    if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buftype == "" and name ~= "" then
+      local stat = vim.uv.fs_stat(name)
+      mtimes[bufnr] = stat and (stat.mtime.sec .. "." .. stat.mtime.nsec) or false
+    end
+  end
+  return mtimes
+end
+
+--- Reload the buffers whose files changed on disk since `mtimes`: the
+--- agent's tools wrote them. Buffers with unsaved changes are left alone.
+reload_changed = function(mtimes)
+  for bufnr, before in pairs(mtimes) do
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      local stat = vim.uv.fs_stat(vim.api.nvim_buf_get_name(bufnr))
+      local now = stat and (stat.mtime.sec .. "." .. stat.mtime.nsec) or false
+      if now and now ~= before then
+        if vim.bo[bufnr].modified then
+          notify(
+            vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":~:.")
+              .. " changed on disk, but has unsaved changes, so it was not reloaded",
+            vim.log.levels.WARN
+          )
+        else
+          sync_from_disk(bufnr)
+        end
+      end
+    end
+  end
+end
+
 --- Send a queued delegated request to the Axo Session.
 local function send_delegated(request)
   local snapshot = request.snapshot
@@ -751,6 +791,9 @@ function M.run(instruction, opts)
 
   local request = {
     instruction = instruction,
+    -- The session's agent's turn reloads files itself; spawned agents may
+    -- change files with their tools.
+    mtimes = not delegated and file_mtimes() or nil,
     snapshot = context.capture({ bufnr = bufnr, position = position, selection = opts.selection }),
     on_done = opts.on_done,
     delegated = delegated,
