@@ -256,7 +256,7 @@ H.test("configure changes only what it is given, at runtime", function()
 end)
 
 H.test(":AgentMode has subcommands, each completed", function()
-  H.eq({ "agent", "ask", "cancel", "config", "dismiss", "log", "new", "transcript" }, vim.fn.getcompletion("AgentMode ", "cmdline"))
+  H.eq({ "agent", "ask", "cancel", "config", "dismiss", "log", "new", "session" }, vim.fn.getcompletion("AgentMode ", "cmdline"))
   H.eq({ "claude", "codex" }, vim.fn.getcompletion("AgentMode agent c", "cmdline"))
   H.eq({ "pi", "claude", "codex", "opencode", "axo" }, vim.fn.getcompletion("AgentMode agent ", "cmdline"))
   H.truthy(vim.fn.maparg("<Plug>(AgentMode)", "n") ~= "", "<Plug>(AgentMode) is mapped in normal mode")
@@ -561,10 +561,25 @@ H.test("pi's tool calls show up as what the agent is looking at", function()
   local decoder = agents.decoders["pi-json"]()
   local events = decoder.feed(vim.json.encode({
     type = "tool_execution_start",
+    toolCallId = "t1",
     toolName = "grep",
     args = { pattern = "function M.plan" },
+  }) .. "\n" .. vim.json.encode({
+    type = "tool_execution_end",
+    toolCallId = "t1",
+    toolName = "grep",
+    result = { content = { { type = "text", text = "lua/x.lua:3" } } },
+    isError = false,
+    durationMs = 12,
   }) .. "\n")
-  H.eq({ { kind = "tool", delta = "grep function M.plan" } }, events)
+  H.eq({
+    {
+      kind = "tool",
+      delta = "grep function M.plan",
+      call = { id = "t1", name = "grep", args = { pattern = "function M.plan" } },
+    },
+    { kind = "tool_end", delta = "", call = { id = "t1", name = "grep", output = "lua/x.lua:3", error = false, ms = 12 } },
+  }, events)
   H.eq("read " .. string.rep("x", 39) .. "…", agents.describe_tool("read", { path = string.rep("x", 50) }))
   H.eq("codemode", agents.describe_tool("codemode", {}))
 end)

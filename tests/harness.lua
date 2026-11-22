@@ -3,6 +3,9 @@
 
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 vim.opt.rtp:prepend(root)
+if vim.env.AGENT_MODE_NUI then
+  vim.opt.rtp:append(vim.env.AGENT_MODE_NUI)
+end
 vim.cmd("runtime plugin/agent_mode.lua")
 
 local H = { root = root }

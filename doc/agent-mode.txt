@@ -12,7 +12,7 @@ CONTENTS                                                 *agent-mode-contents*
   7. Lua in Neovim .............................. |agent-mode-lua|
   8. Lua API .................................... |agent-mode-api|
   9. Highlights ................................. |agent-mode-highlights|
- 10. Transcript ................................. |agent-mode-transcript|
+ 10. Session split .................................. |agent-mode-session|
 
 ==============================================================================
 1. INTRODUCTION                                             *agent-mode-intro*
@@ -56,7 +56,7 @@ Check your setup with: >vim
 
 While a request runs, the line shows what the agent is doing. You can keep
 editing and send more requests; in one conversation they run one at a time
-(see `session`). Edits are applied only if the lines they replace are still
+(see `conversation`). Edits are applied only if the lines they replace are still
 what the agent saw.
 
 These keys exist only in buffers that show an answer:
@@ -92,10 +92,10 @@ Change them with `answer_keymaps`.
 
 :AgentMode new          Start a new conversation with the agent.
 
-:AgentMode transcript   Show or hide the transcript split; the first time,
-                        turn it on. |agent-mode-transcript|
+:AgentMode session      Show or hide the session split; the first time,
+                        turn it on. |agent-mode-session|
 
-:AgentMode log          Show the last request's prompt, command, session
+:AgentMode log          Show the last request's prompt, command, conversation
                         and reply.
 
 ==============================================================================
@@ -124,8 +124,8 @@ reported by |:checkhealth|. Defaults:
       luamode = "confirm",     -- the agent's Lua: "confirm", "allow", false
       luamode_timeout_ms = 10000, -- for Lua that waits (ctx.async)
       max_turns = 8,           -- replies per request
-      session = true,          -- one conversation per Neovim
-      transcript = { enabled = false, position = "right", width = 64 },
+      conversation = true,     -- one conversation per Neovim
+      session = { enabled = false, position = "right", width = 64 },
       axo = { session = "self", cmd = "axo", timeout_ms = 600000 },
     }
 <
@@ -190,7 +190,7 @@ require("agent_mode").run({instruction}, {opts})            *agent_mode.run()*
 require("agent_mode").prompt()                           *agent_mode.prompt()*
     Open the prompt, as |<Plug>(AgentMode)| does.
 
-require("agent_mode").new_session()                 *agent_mode.new_session()*
+require("agent_mode").new_conversation()       *agent_mode.new_conversation()*
     Start a new conversation.
 
 ==============================================================================
@@ -199,15 +199,26 @@ require("agent_mode").new_session()                 *agent_mode.new_session()*
 AgentModeAnswer, AgentModeAnswerBorder, AgentModeAnswerTitle    answers
 AgentModeInput, AgentModeInputBorder, AgentModeInputTitle       the prompt
 AgentModeLuaBorder, AgentModeLuaTitle                     the Lua confirmation
+AgentModeSessionYou, AgentModeSessionYouBar, AgentModeSessionYouName,
+AgentModeSessionTool, AgentModeSessionToolName, AgentModeSessionOk,
+AgentModeSessionError, AgentModeSessionRunning, AgentModeSessionDim,
+AgentModeSessionFold, AgentModeSessionAgent, AgentModeSessionSummary
+                                                     the session split
 
 ==============================================================================
-10. TRANSCRIPT                                         *agent-mode-transcript*
+10. SESSION SPLIT                                         *agent-mode-session*
 
-With `transcript.enabled`, a split on the `transcript.position` side logs
-every request: what you asked and where, the agent's tool calls, its Lua and
-what came back, edits, reloaded files, and its answers, in Markdown. You
-still ask inline and the line shows the agent's status, but answers go to the
-transcript. The split follows new entries unless you scroll up. It is the
-buffer `agent-mode://transcript`, with 'filetype' markdown.
+With `session.enabled`, a split on the `session.position` side logs every
+request: what you asked and where, each tool call with its full command and
+duration, its Lua and what came back, edits, reloaded files, and its answers,
+in Markdown. Tool output is folded under each call: <CR> or <Tab> opens or
+closes it, q hides the split. You still ask inline and the line shows the
+agent's status, but answers go to the session. The split follows new entries
+unless you scroll up.
+
+The split is pinned: it shows in every tab while it is open, and a tab left
+with only the session in it closes (or Neovim quits, as with |:quit|, when
+it is the last tab). It is the buffer `agent-mode://session`, with
+'filetype' agentmode, drawn with nui.nvim.
 
  vim:tw=78:ts=8:noet:ft=help:norl:

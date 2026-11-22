@@ -482,7 +482,7 @@ local function scripted_agent(replies, opts)
   agent_mode.setup(vim.tbl_extend("force", {
     keymap = false,
     luamode = "allow",
-    session = false,
+    conversation = false,
     agent = function(request)
       prompts[#prompts + 1] = request.prompt
       local reply = replies[#prompts] or replies[#replies]
@@ -514,9 +514,9 @@ H.test("requests share one session and run one at a time", function()
   H.eq({ started = false }, calls[1].session, "the first request starts it")
   H.eq({ id = "sess-1", started = true }, calls[2].session, "the second continues it")
   H.truthy((calls[2].at - calls[1].at) / 1e6 >= 300, "the second waited for the first")
-  H.eq("sess-1", agent_mode.session().id)
-  agent_mode.new_session()
-  H.eq(nil, agent_mode.session())
+  H.eq("sess-1", agent_mode.conversation().id)
+  agent_mode.new_conversation()
+  H.eq(nil, agent_mode.conversation())
   agent_mode.dismiss(true)
 end)
 
@@ -557,8 +557,8 @@ H.test(":AgentMode config is a vim.ui.select menu that comes back after each cha
   H.eq("opus", agent_mode.config.model)
   H.eq("max", agent_mode.config.thinking)
   H.eq(false, agent_mode.config.luamode)
-  H.eq(false, agent_mode.config.session)
-  H.eq('require("agent_mode").setup({\n  agent = "claude",\n  model = "opus",\n  thinking = "max",\n  luamode = false,\n  session = false,\n})', vim.fn.getreg('"'))
+  H.eq(false, agent_mode.config.conversation)
+  H.eq('require("agent_mode").setup({\n  agent = "claude",\n  model = "opus",\n  thinking = "max",\n  luamode = false,\n  conversation = false,\n})', vim.fn.getreg('"'))
 end)
 
 H.test("files the agent changed on disk are reloaded, unless they have unsaved changes", function()
@@ -578,7 +578,7 @@ H.test("files the agent changed on disk are reloaded, unless they have unsaved c
     "sleep 1.1; echo 'local new = 2' > %s; echo 'local theirs = 2' > %s; printf '%%s' '{\"actions\":[{\"type\":\"message\",\"text\":\"ok\"}]}'",
     other, dirty
   )
-  agent_mode.setup({ keymap = false, session = false, agent = function()
+  agent_mode.setup({ keymap = false, conversation = false, agent = function()
     return { argv = { "sh", "-c", script }, stdin = "" }
   end })
   H.eq(nil, H.run_agent("change the other files", { bufnr = here, position = { row = 1, col = 0 } }))
@@ -588,13 +588,20 @@ H.test("files the agent changed on disk are reloaded, unless they have unsaved c
   vim.cmd("bwipeout! " .. other_buf .. " " .. dirty_buf)
 end)
 
-H.test("with the transcript on, it logs the request, tool calls, Lua and the answer, and nothing shows inline", function()
+H.test("with the session on, it logs the request, tool calls, Lua and the answer, and nothing shows inline", function()
   local buf = H.buffer({ "local a = 1", "local b = 2" }, "lua")
   local code_win = vim.api.nvim_get_current_win()
   local function pi_events(text, tool)
     local events = {}
     if tool then
-      events[#events + 1] = vim.json.encode({ type = "tool_execution_start", toolName = "grep", args = { pattern = tool } })
+      events[#events + 1] = vim.json.encode({ type = "tool_execution_start", toolCallId = "c1", toolName = "grep", args = { pattern = tool } })
+      events[#events + 1] = vim.json.encode({
+        type = "tool_execution_end",
+        toolCallId = "c1",
+        toolName = "grep",
+        result = { content = { { type = "text", text = "a.lua:1: local a = 1\na.lua:2: local b = 2" } } },
+        durationMs = 34,
+      })
     end
     events[#events + 1] = vim.json.encode({
       type = "message_end",
@@ -610,8 +617,8 @@ H.test("with the transcript on, it logs the request, tool calls, Lua and the ans
   agent_mode.setup({
     keymap = false,
     luamode = "allow",
-    session = false,
-    transcript = { enabled = true, position = "right", width = 50 },
+    conversation = false,
+    session = { enabled = true, position = "right", width = 50 },
     agent = function()
       turn = turn + 1
       return { argv = { H.root .. "/tests/fake_agent.sh", replies[turn], "0" }, stdin = "", output = "pi-json" }
@@ -619,23 +626,47 @@ H.test("with the transcript on, it logs the request, tool calls, Lua and the ans
   })
   vim.wait(100)
   H.eq(nil, H.run_agent("what is a?", { bufnr = buf, position = { row = 1, col = 6 } }))
-  local transcript = require("agent_mode.transcript")
-  local text = table.concat(transcript.lines(), "\n")
-  H.contains(text, "> what is a?")
-  H.contains(text, "- grep local a")
-  H.contains(text, "*Looking up a*")
-  H.contains(text, "```lua\nreturn 40 + 2\n```")
-  H.contains(text, "returned:\n42")
-  H.contains(text, "**agent**\n\n`a` is **1**.")
-  H.truthy(text:find("#%d+ done in"), "the request's end is logged")
-  local win = transcript.win()
-  H.truthy(win, "the transcript is open in a split")
+  local view = require("agent_mode.session")
+  local text = table.concat(view.lines(), "\n")
+  H.contains(text, "▍ what is a?")
+  H.contains(text, "✓ grep 34ms  local a", "the tool call, with its full pattern")
+  H.contains(text, "│ a.lua:2: local b = 2", "and all of its output, folded")
+  H.contains(text, "Looking up a")
+  H.contains(text, "return 40 + 2")
+  H.contains(text, "│ returned:")
+  H.contains(text, "  agent\n  a is 1.", "the answer, as Markdown")
+  H.truthy(text:find("✓ agent · [%d.]+s"), "the request's end is logged")
+  local win = view.win()
+  H.truthy(win, "the session is open in a split")
   H.eq(50, vim.api.nvim_win_get_width(win))
   H.eq(code_win, vim.api.nvim_get_current_win(), "the cursor stays in the code")
   H.eq(0, #vim.api.nvim_buf_get_extmarks(buf, -1, 0, -1, { details = true, type = "virt_lines" }), "no inline answer")
-  agent_mode.toggle_transcript()
-  H.eq(nil, transcript.win(), ":AgentMode transcript hides it")
-  agent_mode.configure({ transcript = { enabled = false } })
+  -- Pinned: it opens in every tab while it is showing.
+  vim.cmd("tabnew")
+  vim.wait(200, function() return view.win() ~= nil end)
+  H.truthy(view.win(), "the session follows to a new tab")
+  -- Closing the last other window in a tab closes the tab with it.
+  local tabs = #vim.api.nvim_list_tabpages()
+  local tab_wins = vim.api.nvim_tabpage_list_wins(0)
+  H.eq(2, #tab_wins, "the new tab has its window and the session")
+  local other = vim.tbl_filter(function(w) return w ~= view.win() end, tab_wins)[1]
+  vim.api.nvim_win_close(other, false)
+  H.truthy(vim.wait(500, function() return #vim.api.nvim_list_tabpages() == tabs - 1 end), "the tab left with only the session closes")
+  -- :only elsewhere does not take it away; files never open in it.
+  vim.api.nvim_set_current_win(code_win)
+  vim.cmd("only")
+  H.truthy(vim.wait(500, function() return view.win() ~= nil end), "the session comes back after :only")
+  vim.api.nvim_set_current_win(view.win())
+  H.truthy(not pcall(vim.cmd, "enew"), "a file cannot replace the session in its window")
+  -- :q in it hides it, like q.
+  vim.cmd("quit")
+  H.truthy(vim.wait(500, function() return view.win() == nil end), ":q in the session hides it")
+  H.truthy(vim.api.nvim_win_is_valid(code_win), "and leaves the code")
+  agent_mode.toggle_session()
+  H.truthy(view.win(), "it shows again")
+  agent_mode.toggle_session()
+  H.eq(nil, view.win(), ":AgentMode session hides it")
+  agent_mode.configure({ session = { enabled = false } })
 end)
 
 H.test("an answer taller than the window shows what fits and how to read the rest", function()

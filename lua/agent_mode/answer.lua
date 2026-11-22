@@ -82,14 +82,20 @@ local SKIPPED_CAPTURES = { spell = true, nospell = true, conceal = true, none = 
 --- Highlight `lines` as Markdown with tree-sitter, including injected
 --- languages in fenced code blocks when their parsers are installed.
 --- Returns, for each line, a list of virt_text chunks { text, hl_group }.
-function M.highlight(lines, base_group)
+--- With `opts.conceal`, what the queries conceal (the ** around bold, the
+--- backticks around code) is left out.
+--- @param opts? { conceal: boolean }
+function M.highlight(lines, base_group, opts)
+  local conceal = opts and opts.conceal
   local text = table.concat(lines, "\n")
   -- groups[row][byte] = highlight group; later captures and injected
   -- languages win, as in a buffer.
   local groups = {}
+  local hidden = {}
   local fences = {}
   for row = 1, #lines do
     groups[row] = {}
+    hidden[row] = {}
     fences[row] = is_fence(lines[row]) and true or false
   end
 
@@ -103,9 +109,17 @@ function M.highlight(lines, base_group)
         if not query then
           return
         end
-        for id, node in query:iter_captures(tree:root(), text, 0, -1) do
+        for id, node, metadata in query:iter_captures(tree:root(), text, 0, -1) do
           local name = query.captures[id]
-          if not SKIPPED_CAPTURES[name] and not name:match("^_") then
+          local replacement = metadata and (metadata.conceal or (metadata[id] and metadata[id].conceal))
+          if conceal and name == "conceal" and (replacement == nil or replacement == "") then
+            local start_row, start_col, end_row, end_col = node:range()
+            if start_row == end_row and start_row < #lines then
+              for col = start_col + 1, end_col do
+                hidden[start_row + 1][col] = true
+              end
+            end
+          elseif not SKIPPED_CAPTURES[name] and not name:match("^_") then
             local group = "@" .. name .. "." .. lang
             local injected = lang ~= "markdown" and lang ~= "markdown_inline"
             local start_row, start_col, end_row, end_col = node:range()
@@ -132,11 +146,20 @@ function M.highlight(lines, base_group)
   for row, line in ipairs(lines) do
     local chunks = {}
     local start, current = 1, groups[row][1]
+    local function flush(last)
+      local piece = {}
+      for col = start, last do
+        if not hidden[row][col] then
+          piece[#piece + 1] = line:sub(col, col)
+        end
+      end
+      local hl = current and { base_group, current } or base_group
+      chunks[#chunks + 1] = { table.concat(piece), hl }
+    end
     for col = 2, #line + 1 do
       local group = groups[row][col]
       if col > #line or group ~= current then
-        local hl = current and { base_group, current } or base_group
-        chunks[#chunks + 1] = { line:sub(start, col - 1), hl }
+        flush(col - 1)
         start, current = col, group
       end
     end

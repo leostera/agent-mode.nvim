@@ -29,7 +29,7 @@ local M = {}
 ---@field next? string|false
 ---@field prev? string|false
 
----@class agent_mode.TranscriptOptions
+---@class agent_mode.SessionOptions
 ---@field enabled? boolean
 ---@field position? "right"|"left"
 ---@field width? integer
@@ -57,8 +57,8 @@ local M = {}
 ---@field luamode? "confirm"|"allow"|false
 ---@field luamode_timeout_ms? integer
 ---@field max_turns? integer
----@field session? boolean
----@field transcript? agent_mode.TranscriptOptions
+---@field conversation? boolean
+---@field session? agent_mode.SessionOptions
 
 ---@type agent_mode.Config
 M.defaults = {
@@ -125,12 +125,12 @@ M.defaults = {
   -- so you can refer to earlier questions, answers and results. Requests
   -- then run one at a time, in order. :AgentMode new starts a fresh one.
   -- false runs each request on its own, all at once.
-  session = true,
-  -- A side split that logs every request: your messages, the agent's tool
+  conversation = true,
+  -- The session: a side split, pinned to every tab, that logs every request: your messages, the agent's tool
   -- calls, its Lua, edits, reloaded files, and its answers. While it is on,
-  -- answers go there instead of under the line. :AgentMode transcript
+  -- answers go there instead of under the line. :AgentMode session
   -- shows or hides it.
-  transcript = { enabled = false, position = "right", width = 64 },
+  session = { enabled = false, position = "right", width = 64 },
 }
 
 ---@type agent_mode.Config|fun(): agent_mode.Config|nil
@@ -192,11 +192,11 @@ function M.check(config)
     vim.validate("luamode", config.luamode, one_of({ "confirm", "allow", false }))
     vim.validate("luamode_timeout_ms", config.luamode_timeout_ms, "number")
     vim.validate("max_turns", config.max_turns, "number")
-    vim.validate("session", config.session, "boolean")
-    vim.validate("transcript", config.transcript, "table")
-    vim.validate("transcript.enabled", config.transcript.enabled, "boolean")
-    vim.validate("transcript.position", config.transcript.position, one_of({ "right", "left" }))
-    vim.validate("transcript.width", config.transcript.width, "number")
+    vim.validate("conversation", config.conversation, "boolean")
+    vim.validate("session", config.session, "table")
+    vim.validate("session.enabled", config.session.enabled, "boolean")
+    vim.validate("session.position", config.session.position, one_of({ "right", "left" }))
+    vim.validate("session.width", config.session.width, "number")
     vim.validate("axo", config.axo, "table")
     vim.validate("axo.session", config.axo.session, "string")
     vim.validate("axo.cmd", config.axo.cmd, "string")

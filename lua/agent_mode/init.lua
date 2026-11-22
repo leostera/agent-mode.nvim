@@ -27,7 +27,7 @@ local lsp = require("agent_mode.lsp")
 local protocol = require("agent_mode.protocol")
 local run_lua = require("agent_mode.run_lua")
 local introspect = require("agent_mode.introspect")
-local transcript = require("agent_mode.transcript")
+local session_view = require("agent_mode.session")
 local spinner = require("agent_mode.spinner")
 
 local M = {}
@@ -41,10 +41,10 @@ M.defaults = defaults
 M.last = nil
 
 local requests = {} -- running requests, in the order they were asked
-local request_count = 0 -- numbers requests in the transcript
+local request_count = 0 -- numbers requests in the session split
 ---@type { agent: agent_mode.AgentName|function, id: string|nil, started: boolean }|nil
-local session = nil -- the conversation requests continue
-local session_queue = {} -- requests waiting for the session
+local conversation = nil -- the conversation requests continue
+local session_queue = {} -- requests waiting for the conversation
 local session_busy = false
 local axo_queue = {} -- delegated requests waiting for the one in flight
 local axo_busy = false
@@ -62,7 +62,7 @@ end
 
 local function system_prompt()
   local prompt = protocol.system_prompt
-  if M.config.session then
+  if M.config.conversation then
     prompt = prompt .. protocol.session_prompt
   end
   if M.config.luamode then
@@ -77,13 +77,13 @@ end
 --- The command for this request, from the configured agent.
 --- The session requests continue, started fresh when the agent changes.
 local function current_session()
-  if not M.config.session then
+  if not M.config.conversation then
     return nil
   end
-  if not session or session.agent ~= M.config.agent then
-    session = { agent = M.config.agent, id = nil, started = false }
+  if not conversation or conversation.agent ~= M.config.agent then
+    conversation = { agent = M.config.agent, id = nil, started = false }
   end
-  return session
+  return conversation
 end
 
 local function agent_command(prompt)
@@ -137,21 +137,21 @@ local function agent_name()
   return type(M.config.agent) == "string" and M.config.agent or "agent"
 end
 
-local function transcript_on()
-  return M.config.transcript.enabled
+local function session_on()
+  return M.config.session.enabled
 end
 
---- Log to the transcript when it is on: `transcript[kind](request, ...)`.
-local function transcript_log(kind, request, ...)
-  if transcript_on() and request.transcript_started then
-    transcript[kind](request, ...)
+--- Log to the session split when it is on: `session_view[kind](request, ...)`.
+local function session_log(kind, request, ...)
+  if session_on() and request.session_started then
+    session_view[kind](request, ...)
   end
 end
 
 local function show_answer(request, text)
-  if transcript_on() and request.transcript_started then
-    transcript.open(M.config.transcript)
-    return transcript.answer(request, agent_name(), text)
+  if session_on() and request.session_started then
+    session_view.open(M.config.session)
+    return session_view.answer(request, agent_name(), text)
   end
   answer.show(request.snapshot.bufnr, answer_row(request), text, {
     title = agent_name() .. ": " .. request.instruction,
@@ -193,7 +193,13 @@ local function finish(request, err)
   if request.mtimes then
     reload_changed(request.mtimes, request)
   end
-  transcript_log("done", request, err, (vim.uv.hrtime() - request.started_at) / 1e9)
+  session_log(
+    "done",
+    request,
+    err,
+    (vim.uv.hrtime() - request.started_at) / 1e9,
+    agent_name() .. (M.config.model and (" · " .. M.config.model) or "")
+  )
   request.log.error = err
   if err then
     notify(err, vim.log.levels.ERROR)
@@ -306,7 +312,7 @@ run_lua_action = function(request, action, on_done)
         local first = report:match("error: ([^\n]*)") or report
         notify("the agent's Lua failed, so it was told and may try again: " .. first, vim.log.levels.WARN)
       end
-      transcript_log("lua", request, action.code, report)
+      session_log("lua", request, action.code, report)
       record(report)
     end)
   end
@@ -319,7 +325,7 @@ run_lua_action = function(request, action, on_done)
       return
     end
     if choice == "skip" then
-      transcript_log("step", request, "you declined to run its Lua")
+      session_log("step", request, "you declined to run its Lua")
       return record("the user declined to run this code")
     end
     request.lua_allowed = choice == "always"
@@ -337,7 +343,7 @@ local function run_action(request, action, on_done)
     err = err or edits.apply(bufnr, rebased)
     if not err then
       for _, edit in ipairs(rebased or {}) do
-        transcript_log("step", request, string.format("edited lines %d-%d", edit.start_line, edit.end_line))
+        session_log("step", request, string.format("edited lines %d-%d", edit.start_line, edit.end_line))
       end
     end
     return on_done(err)
@@ -351,7 +357,7 @@ local function run_action(request, action, on_done)
     if snapshot.word and context.word_at(line, snapshot.position.col) ~= snapshot.word then
       return on_done(string.format("%s is no longer under the cursor; nothing renamed", snapshot.word))
     end
-    transcript_log("step", request, string.format("renamed `%s` to `%s` with the language server", snapshot.word or "?", action.new_name))
+    session_log("step", request, string.format("renamed `%s` to `%s` with the language server", snapshot.word or "?", action.new_name))
     return lsp.rename(bufnr, { row = row, col = snapshot.position.col }, action.new_name, on_done)
   end
 
@@ -364,7 +370,7 @@ local function run_action(request, action, on_done)
     if not entry then
       return on_done(string.format("the agent picked code action %d, which does not exist", action.id))
     end
-    transcript_log("step", request, "ran code action: " .. (entry.title or tostring(action.id)))
+    session_log("step", request, "ran code action: " .. (entry.title or tostring(action.id)))
     return lsp.run_code_action(bufnr, entry, on_done)
   end
 
@@ -414,8 +420,8 @@ local function handle_reply(request, result, reply)
   if request.session and request.command then
     local id = request.command.session_id
       or (request.command.read_session_id and request.command.read_session_id(result))
-    if id and request.session == session then
-      session.id, session.started = id, true
+    if id and request.session == conversation then
+      conversation.id, conversation.started = id, true
       log.session = id
     end
   end
@@ -426,7 +432,7 @@ local function handle_reply(request, result, reply)
   end
   log.response = response
   if response.summary then
-    transcript_log("summary", request, response.summary)
+    session_log("summary", request, response.summary)
   end
 
   if not vim.api.nvim_buf_is_valid(request.snapshot.bufnr) then
@@ -539,7 +545,11 @@ start_agent = function(request)
         for _, event in ipairs(decoder.feed(chunk)) do
           if event.kind == "tool" then
             stream.tool = event.delta
-            transcript_log("step", request, event.delta)
+            if event.call then
+              session_log("tool_start", request, event.call)
+            end
+          elseif event.kind == "tool_end" then
+            session_log("tool_end", request, event.call)
           else
             stream[event.kind] = stream[event.kind] .. event.delta
           end
@@ -644,7 +654,7 @@ reload_changed = function(mtimes, request)
       if now and now ~= before then
         local file = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":~:.")
         if vim.bo[bufnr].modified then
-          transcript_log("step", request, string.format("`%s` changed on disk but has unsaved changes; not reloaded", file))
+          session_log("step", request, string.format("`%s` changed on disk but has unsaved changes; not reloaded", file))
           notify(
             vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":~:.")
               .. " changed on disk, but has unsaved changes, so it was not reloaded",
@@ -652,7 +662,7 @@ reload_changed = function(mtimes, request)
           )
         else
           sync_from_disk(bufnr)
-          transcript_log("step", request, string.format("reloaded `%s`, changed by the agent", file))
+          session_log("step", request, string.format("reloaded `%s`, changed by the agent", file))
         end
       end
     end
@@ -718,9 +728,9 @@ local function send_delegated(request)
     local text = vim.trim(reply.text or "")
     if edited then
       local summary = text:match("[^\n]+")
-      transcript_log("step", request, "the session's agent edited " .. vim.fn.fnamemodify(snapshot.path, ":~:."))
-      if summary and transcript_on() then
-        transcript_log("summary", request, summary)
+      session_log("step", request, "the session's agent edited " .. vim.fn.fnamemodify(snapshot.path, ":~:."))
+      if summary and session_on() then
+        session_log("summary", request, summary)
       elseif summary then
         notify(summary)
       end
@@ -782,9 +792,9 @@ function M.run(instruction, opts)
   request_count = request_count + 1
   request.id = request_count
   request.started_at = vim.uv.hrtime()
-  if transcript_on() then
-    transcript.open(M.config.transcript)
-    transcript.request(request)
+  if session_on() then
+    session_view.open(M.config.session)
+    session_view.request(request)
   end
 
   if delegated then
@@ -799,7 +809,7 @@ function M.run(instruction, opts)
     if request.finished then
       return
     end
-    if not M.config.session then
+    if not M.config.conversation then
       return start_agent(request)
     end
     if session_busy then
@@ -853,14 +863,14 @@ end
 
 --- Start a fresh conversation for the next request. Requests already
 --- running finish in the old one.
-function M.new_session()
-  session = nil
+function M.new_conversation()
+  conversation = nil
   notify("the next request starts a new conversation")
 end
 
 --- The conversation requests continue, if one has started.
-function M.session()
-  return session and session.started and vim.deepcopy(session) or nil
+function M.conversation()
+  return conversation and conversation.started and vim.deepcopy(conversation) or nil
 end
 
 --- Clear the inline answer nearest the cursor, or all of them with `all`.
@@ -925,37 +935,37 @@ local function apply(config)
     vim.keymap.set({ "n", "x" }, config.keymap, "<Plug>(AgentMode)", { desc = "agent-mode: ask the agent" })
     mapped_keymap = config.keymap
   end
-  local was = M.config and M.config.transcript.enabled
+  local was = M.config and M.config.session.enabled
   M.config = config
-  -- The transcript shows while it is on: open it when turned on (once
+  -- The session split shows while it is on: open it when turned on (once
   -- Neovim has started), close it when turned off.
-  if config.transcript.enabled and not was then
+  if config.session.enabled and not was then
     if vim.v.vim_did_enter == 1 then
       vim.schedule(function()
-        transcript.open(M.config.transcript)
+        session_view.open(M.config.session)
       end)
     else
       vim.api.nvim_create_autocmd("VimEnter", {
         once = true,
         callback = function()
-          if M.config.transcript.enabled then
-            transcript.open(M.config.transcript)
+          if M.config.session.enabled then
+            session_view.open(M.config.session)
           end
         end,
       })
     end
-  elseif was and not config.transcript.enabled then
-    transcript.close()
+  elseif was and not config.session.enabled then
+    session_view.close()
   end
 end
 
---- Show or hide the transcript. Showing it turns it on, so answers go
+--- Show or hide the session split. Showing it turns it on, so answers go
 --- there; hiding it leaves it on until the next request reopens it.
-function M.toggle_transcript()
-  if not M.config.transcript.enabled then
-    return M.configure({ transcript = { enabled = true } })
+function M.toggle_session()
+  if not M.config.session.enabled then
+    return M.configure({ session = { enabled = true } })
   end
-  transcript.toggle(M.config.transcript)
+  session_view.toggle(M.config.session)
 end
 
 --- Set agent-mode's settings: `opts` over `vim.g.agent_mode` over the

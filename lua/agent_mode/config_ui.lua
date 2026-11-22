@@ -89,7 +89,7 @@ function M.snippet()
   local config = agent_mode().config
   local defaults = agent_mode().defaults
   local lines = { 'require("agent_mode").setup({' }
-  for _, key in ipairs({ "agent", "model", "thinking", "luamode", "session", "input", "transcript" }) do
+  for _, key in ipairs({ "agent", "model", "thinking", "luamode", "conversation", "input", "session" }) do
     local value = config[key]
     if type(value) ~= "function" and not vim.deep_equal(value, defaults[key]) then
       lines[#lines + 1] = string.format("  %s = %s,", key, vim.inspect(value))
@@ -205,9 +205,9 @@ local function entries()
     }
     list[#list + 1] = {
       label = "Conversation",
-      value = config.session and "one per Neovim" or "none (requests run at once)",
+      value = config.conversation and "one per Neovim" or "none (requests run at once)",
       change = function(done)
-        set({ session = not config.session })
+        set({ conversation = not config.conversation })
         done()
       end,
     }
@@ -221,32 +221,32 @@ local function entries()
     end,
   }
   list[#list + 1] = {
-    label = "Transcript",
-    value = config.transcript.enabled and ("on, " .. config.transcript.position) or "off (answers inline)",
+    label = "Session",
+    value = config.session.enabled and ("on, " .. config.session.position) or "off (answers inline)",
     change = function(done)
       local choices = { { "off (answers inline)", false }, { "on, right", "right" }, { "on, left", "left" } }
       select(choices, {
-        prompt = "Transcript split",
+        prompt = "Session split",
         format_item = function(item)
           return item[1]
         end,
       }, function(choice)
         if choice then
-          local t = vim.deepcopy(config.transcript)
+          local t = vim.deepcopy(config.session)
           t.enabled = choice[2] ~= false
           t.position = choice[2] or t.position
-          set({ transcript = t })
+          set({ session = t })
         end
         done()
       end)
     end,
   }
-  local session = agent_mode().session()
+  local current = agent_mode().conversation()
   list[#list + 1] = {
     label = "New conversation",
-    value = session and ("now " .. session.id:sub(1, 12) .. "…") or "none yet",
+    value = current and ("now " .. current.id:sub(1, 12) .. "…") or "none yet",
     change = function(done)
-      agent_mode().new_session()
+      agent_mode().new_conversation()
       done()
     end,
   }

@@ -38,7 +38,8 @@ local M = {}
 --- events and, at the end, the reply text.
 ---   decoder.feed(chunk) -> { { kind = "thinking"|"text"|"tool", delta = string }, ... }
 ---     ("tool" events name the tool the agent just started, and replace
----     the one before)
+---     the one before; they and "tool_end" events carry the call:
+---     { id, name, args } and { id, name, output, error, ms })
 ---   decoder.reply()     -> string
 M.decoders = {}
 
@@ -118,7 +119,24 @@ M.decoders["pi-json"] = function()
               events[#events + 1] = { kind = "text", delta = update.delta }
             end
           elseif event.type == "tool_execution_start" and type(event.toolName) == "string" then
-            events[#events + 1] = { kind = "tool", delta = M.describe_tool(event.toolName, event.args) }
+            events[#events + 1] = {
+              kind = "tool",
+              delta = M.describe_tool(event.toolName, event.args),
+              call = { id = event.toolCallId, name = event.toolName, args = event.args },
+            }
+          elseif event.type == "tool_execution_end" and type(event.toolName) == "string" then
+            local result = type(event.result) == "table" and message_text(event.result) or ""
+            events[#events + 1] = {
+              kind = "tool_end",
+              delta = "",
+              call = {
+                id = event.toolCallId,
+                name = event.toolName,
+                output = result,
+                error = event.isError == true,
+                ms = type(event.durationMs) == "number" and event.durationMs or nil,
+              },
+            }
           elseif event.type == "message_end" and type(event.message) == "table" and event.message.role == "assistant" then
             final = message_text(event.message)
           end
