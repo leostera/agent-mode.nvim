@@ -71,6 +71,7 @@ local function addresses()
 end
 
 local channel = nil
+local channel_id = nil -- this bridge's channel, as Neovim numbers it
 local function connect()
   if channel then
     local ok = pcall(vim.rpcrequest, channel, "nvim_get_api_info")
@@ -85,6 +86,8 @@ local function connect()
       local alive = pcall(vim.rpcrequest, chan, "nvim_exec_lua", "return require('agent_mode') ~= nil", {})
       if alive then
         channel = chan
+        local info_ok, info = pcall(vim.rpcrequest, chan, "nvim_get_api_info")
+        channel_id = info_ok and type(info) == "table" and info[1] or nil
         return chan
       end
     end
@@ -98,7 +101,10 @@ local function call_tool(name, args)
     return "No Neovim with agent-mode was found for " .. (vim.uv.cwd() or "this folder")
       .. ". Start Neovim with agent-mode installed, or pass --server <address>.", true
   end
-  local ok, ticket = pcall(vim.rpcrequest, chan, "nvim_exec_lua", "return require('agent_mode').tool_call(...)", { name, args or {} })
+  -- _channel lets Neovim tell when this agent goes away (it pairs by it).
+  args = type(args) == "table" and args or {}
+  args._channel = channel_id
+  local ok, ticket = pcall(vim.rpcrequest, chan, "nvim_exec_lua", "return require('agent_mode').tool_call(...)", { name, args })
   if not ok then
     return "Neovim failed to take the call: " .. tostring(ticket), true
   end

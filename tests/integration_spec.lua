@@ -574,7 +574,7 @@ H.test(":AgentMode config is a vim.ui.select menu that comes back after each cha
   H.truthy(vim.wait(2000, function() return #script == 0 end), "the menu did not come back after each change")
   vim.ui.select, vim.ui.input = select, input
   package.loaded.snacks, package.preload.snacks = snacks, nil
-  H.contains(table.concat(menus[1], "\n"), "Agent              pi")
+  H.contains(table.concat(menus[1], "\n"), "Agent            pi")
   H.eq("claude", agent_mode.config.agent)
   H.eq("opus", agent_mode.config.model)
   H.eq("max", agent_mode.config.thinking)
@@ -700,6 +700,49 @@ H.test("an attached agent takes requests through wait_for_request, instead of a 
   H.truthy(vim.wait(10000, function() return exited end, 20), "the agent finished")
   H.contains(tool_results(), "Instruction: what is a?")
   agent_mode.new_session()
+  agent_mode.dismiss(true)
+end)
+
+H.test("a paired agent (as pi-nvim pairs) takes requests until it goes away", function()
+  local buf = H.buffer({ "local a = 1" }, "lua")
+  agent_mode.setup({ keymap = false, agent = function()
+    error("no agent should start while one is paired")
+  end })
+  -- One bridge for the whole pairing, as pi-nvim keeps one.
+  local replies = {}
+  local bridge = vim.system({ agent_mode.mcp_server, "--server", vim.v.servername }, {
+    stdin = true,
+    stdout = function(_, data)
+      for line in (data or ""):gmatch("[^\n]+") do
+        local ok, message = pcall(vim.json.decode, line)
+        if ok and message.id then
+          replies[message.id] = ((message.result or {}).content or {})[1]
+        end
+      end
+    end,
+  })
+  local function send(id, method, params)
+    bridge:write(vim.json.encode({ jsonrpc = "2.0", id = id, method = method, params = params }) .. "\n")
+  end
+  send(1, "initialize", {})
+  send(2, "tools/call", { name = "pair", arguments = { agent = "pi (demo)" } })
+  H.truthy(vim.wait(10000, function() return agent_mode.paired() ~= nil end, 20), "paired")
+  H.eq("pi (demo)", agent_mode.paired().agent)
+  send(3, "tools/call", { name = "wait_for_request", arguments = { timeout_seconds = 30 } })
+  local done, err = false, nil
+  agent_mode.run("what is a?", { position = { row = 1, col = 6 }, on_done = function(e) done, err = true, e end })
+  H.truthy(vim.wait(10000, function() return replies[3] ~= nil end, 20), "the request reached the agent")
+  local id = replies[3].text:match("context_id: (%x+)")
+  H.truthy(id, replies[3].text)
+  -- pi answered in words only; pi-nvim finishes with that reply.
+  send(4, "tools/call", { name = "finish", arguments = { context_id = id, reply = "a is **1**." } })
+  H.truthy(vim.wait(10000, function() return done end, 20), "the request finished")
+  H.eq(nil, err)
+  H.contains(table.concat(require("agent_mode.answer").list(buf)[1].lines, "\n"), "a is **1**.")
+  H.contains(require("agent_mode.answer").list(buf)[1].lines[1], "pi: what is a?", "titled with the paired agent")
+  -- pi quits: its bridge goes, and Neovim unpairs.
+  bridge:kill(15)
+  H.truthy(vim.wait(6000, function() return agent_mode.paired() == nil end, 50), "unpaired when the agent went away")
   agent_mode.dismiss(true)
 end)
 

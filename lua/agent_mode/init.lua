@@ -8,10 +8,12 @@
 -- snapshot so they land on the right lines as the user keeps typing.
 --
 -- Where a request goes:
---   - to an attached agent, when one is listening (wait_for_request), always;
+--   - to the paired agent, when there is one, always: pi-nvim pairs a pi
+--     session (/nvim) and pushes requests into it; other agents pair by
+--     listening with wait_for_request;
 --   - otherwise by session.mode: "start" a new agent for it (one session per
---     Neovim, or one agent per request without a session), "attach" (wait
---     for an agent and say how to attach one), or "ask" which;
+--     Neovim, or one agent per request without a session), "pair" (wait
+--     for an agent and say how to pair one), or "ask" which;
 --   - with agent = "axo", to an Axo Session.
 
 local agents = require("agent_mode.agents")
@@ -50,11 +52,14 @@ local session_busy = false
 local axo_queue = {} -- delegated requests waiting for the one in flight
 local axo_busy = false
 
--- Attached agents: they listen with wait_for_request.
-local waiters = {} -- pending wait_for_request calls: { settle = fun(text), timer }
-local attach_queue = {} -- requests waiting for an attached agent
-local attached_request = nil -- the request an attached agent is working on
-local attached_seen = nil -- when an attached agent last asked for a request
+-- The paired agent. pi-nvim pairs explicitly (the hidden pair tool) and
+-- takes each request with wait_for_request; other agents pair by listening.
+local waiters = {} -- pending wait_for_request calls: { settle = fun(text), timer, channel }
+local attach_queue = {} -- requests waiting for the paired agent
+local attached_request = nil -- the request the paired agent is working on
+local attached_seen = nil -- when a listening agent last asked for a request
+---@type { agent: string, channel: integer, timer: uv.uv_timer_t }|nil
+local paired = nil -- an agent that paired with the pair tool
 
 local function notify(message, level)
   vim.notify("agent-mode: " .. message, level or vim.log.levels.INFO)
@@ -69,10 +74,22 @@ local function new_id()
   return string.format("%x%04x", os.time(), math.random(0, 0xffff))
 end
 
---- Whether an agent is attached: listening now, working on a request it
---- took, or between the two.
+--- Whether an agent is paired: explicitly, or listening now, working on a
+--- request it took, or between the two.
 local function attached()
-  return #waiters > 0 or attached_request ~= nil or (attached_seen ~= nil and vim.uv.now() - attached_seen < 15000)
+  return paired ~= nil
+    or #waiters > 0
+    or attached_request ~= nil
+    or (attached_seen ~= nil and vim.uv.now() - attached_seen < 15000)
+end
+
+--- Whether the agent on the other end of an RPC channel is still there.
+local function channel_alive(channel)
+  if not channel then
+    return true -- callers that do not say which channel they are
+  end
+  local ok, info = pcall(vim.api.nvim_get_chan_info, channel)
+  return ok and info and info.id ~= nil
 end
 
 -- Agents ----------------------------------------------------------------------
@@ -162,7 +179,8 @@ end
 
 local function show_answer(request, text)
   answer.show(request.snapshot.bufnr, answer_row(request), text, {
-    title = agent_name() .. ": " .. (request.instruction or "answer"),
+    -- Named for who answered: the paired agent ("pi (project)" -> "pi").
+    title = (request.answered_by or agent_name()) .. ": " .. (request.instruction or "answer"),
     keys = M.config.answer_keymaps,
   })
 end
@@ -492,8 +510,25 @@ end
 
 -- Attached agents -------------------------------------------------------------
 
+--- Drop listeners whose agent went away, so no request goes to them.
+local function prune_waiters()
+  waiters = vim.tbl_filter(function(waiter)
+    if channel_alive(waiter.channel) then
+      return true
+    end
+    waiter.timer:stop()
+    waiter.timer:close()
+    return false
+  end, waiters)
+end
+
+local function paired_name()
+  return paired and paired.agent or "the paired agent"
+end
+
 --- Hand waiting requests to listening agents.
 local function deliver()
+  prune_waiters()
   while #waiters > 0 and #attach_queue > 0 do
     local request = table.remove(attach_queue, 1)
     if not request.finished then
@@ -501,39 +536,59 @@ local function deliver()
       waiter.timer:stop()
       waiter.timer:close()
       attached_request = request
-      request.spinner:set_status("with the attached agent…")
+      request.answered_by = paired and paired.agent:match("^%S+") or nil
+      request.spinner:set_status("with " .. paired_name() .. "…")
       request.log.prompt = render(request)
       waiter.settle(request.log.prompt)
     end
   end
 end
 
---- Wait for an attached agent to take the request.
+--- Wait for the paired agent to take the request.
 local function hand_to_attached(request)
   request.attached = true
   attach_queue[#attach_queue + 1] = request
-  request.spinner:set_status("waiting for an attached agent…")
+  request.spinner:set_status(paired and ("queued for " .. paired.agent .. "…") or "waiting for an agent to pair…")
   deliver()
+end
+
+--- Forget the paired agent; requests waiting for it or with it end.
+local function unpair(reason)
+  if paired then
+    paired.timer:stop()
+    paired.timer:close()
+    notify(paired.agent .. " " .. reason)
+  end
+  paired = nil
+  prune_waiters()
+  if #waiters == 0 then
+    for _, request in ipairs(vim.list_slice(attach_queue, 1, #attach_queue)) do
+      finish(request, "no agent is paired any more")
+    end
+    if attached_request and not attached_request.finished then
+      finish(attached_request, "the paired agent went away")
+    end
+  end
 end
 
 --- Where the request goes when no agent is attached: by session.mode.
 local function start_or_attach(request, choice)
   choice = choice or M.config.session.mode
-  if choice == "attach" then
+  if choice == "pair" then
     hand_to_attached(request)
-    return M.attach()
+    return M.pair()
   end
   if choice == "ask" then
-    request.spinner:set_status("start an agent or attach one?")
+    request.spinner:set_status("start an agent or pair one?")
     local start = "Start a new " .. agent_name() .. (M.config.session.enabled and " session" or "")
-    return vim.ui.select({ start, "Attach an agent" }, { prompt = "agent-mode: no agent is attached" }, function(item)
+    return vim.ui.select({ start, "Pair an agent" }, { prompt = "agent-mode: no agent is paired" }, function(item)
       if request.finished then
         return
       end
       if not item then
         return finish(request, "cancelled")
       end
-      start_or_attach(request, item == start and "start" or "attach")
+      start_or_attach(request, item == start and "start" or "pair")
     end)
   end
   if not M.config.session.enabled then
@@ -595,7 +650,7 @@ function tools.wait_for_request(args, done)
   end
   attached_seen = vim.uv.now()
   local timeout = math.max(1, math.min(tonumber(args.timeout_seconds) or 300, 3600))
-  local waiter = { settle = done, timer = assert(vim.uv.new_timer()) }
+  local waiter = { settle = done, timer = assert(vim.uv.new_timer()), channel = args._channel }
   waiters[#waiters + 1] = waiter
   waiter.timer:start(timeout * 1000, 0, vim.schedule_wrap(function()
     for i, w in ipairs(waiters) do
@@ -723,7 +778,11 @@ function tools.finish(args, done)
   if not ctx then
     return done(err, true)
   end
-  if type(args.summary) == "string" and args.summary ~= "" and not ctx.acted then
+  -- reply: what the agent said when its turn ended (pi-nvim sends it), shown
+  -- as the answer when it did nothing else.
+  if type(args.reply) == "string" and vim.trim(args.reply) ~= "" and not ctx.acted and ctx.spinner then
+    show_answer(ctx, vim.trim(args.reply))
+  elseif type(args.summary) == "string" and args.summary ~= "" and not ctx.acted then
     notify(args.summary)
   end
   ctx.acted = true
@@ -731,6 +790,35 @@ function tools.finish(args, done)
     finish(ctx, nil)
   end
   done("Finished.")
+end
+
+-- pair and unpair are not in the tool list the model sees: pi-nvim calls
+-- them when the user runs /nvim in pi.
+function tools.pair(args, done)
+  local channel = tonumber(args._channel)
+  if not channel then
+    return done("pair needs the bridge's channel", true)
+  end
+  if paired then
+    paired.timer:stop()
+    paired.timer:close()
+  end
+  local agent = type(args.agent) == "string" and args.agent ~= "" and args.agent or "an agent"
+  local timer = assert(vim.uv.new_timer())
+  paired = { agent = agent, channel = channel, timer = timer }
+  -- The agent going away (pi quit) closes its channel.
+  timer:start(2000, 2000, vim.schedule_wrap(function()
+    if paired and paired.timer == timer and not channel_alive(channel) then
+      unpair("went away; unpaired")
+    end
+  end))
+  notify("paired with " .. agent .. "; requests at your cursor go to it")
+  done(string.format("Paired with Neovim %s in %s.", vim.v.servername, vim.fn.fnamemodify(vim.fn.getcwd(), ":~")))
+end
+
+function tools.unpair(_, done)
+  unpair("unpaired")
+  done("Unpaired.")
 end
 
 --- Carry out an MCP tool call (from bin/nvim-mcp). Returns a ticket
@@ -966,30 +1054,29 @@ end
 --- How to attach an agent to this Neovim: what to add to the agent once,
 --- and what to tell it. Shown in a scratch window; the instruction is
 --- copied to the clipboard.
-function M.attach()
-  local listen = "Listen to Neovim: call nvim-mcp's wait_for_request tool, handle each request it returns with"
+function M.pair()
+  local listen = "Pair with Neovim: call nvim-mcp's wait_for_request tool, handle each request it returns with"
     .. " nvim-mcp's tools, and call wait_for_request again after each one, until I say stop."
   local lines = {
-    "# Attach an agent to this Neovim",
+    "# Pair an agent with this Neovim",
     "",
     "Neovim: `" .. vim.v.servername .. "`, in `" .. vim.fn.fnamemodify(vim.fn.getcwd(), ":~") .. "`",
     "",
-    "1. Add the nvim-mcp server to your agent, once:",
+    paired and ("Paired now with " .. paired.agent .. ".") or "Nothing is paired now.",
     "",
-    "   pi:        pi install " .. M.pi_extension,
+    "pi: install pi-nvim once, then run /nvim in pi and pick this Neovim:",
+    "",
+    "   pi install " .. M.pi_extension,
+    "",
+    "Others: add the nvim-mcp server once, then tell the agent",
+    "(copied to your clipboard): " .. listen,
+    "",
     "   Claude:    claude mcp add --scope user nvim-mcp -- " .. M.mcp_server,
     "   Codex:     codex mcp add nvim-mcp -- " .. M.mcp_server,
     "   OpenCode:  in ~/.config/opencode/opencode.json, under \"mcp\":",
     '              "nvim-mcp": { "type": "local", "command": ["' .. M.mcp_server .. '"] }',
     "",
-    "   Run the agent in any folder: it finds the Neovim in its project, or",
-    "   else the one you used last.",
-    "",
-    "2. Tell it (copied to your clipboard):",
-    "",
-    "   " .. listen,
-    "",
-    "Requests you make at your cursor go to it while it listens.",
+    "Requests you make at your cursor then go to the paired agent.",
   }
   pcall(vim.fn.setreg, "+", listen)
   vim.fn.setreg('"', listen)
@@ -1019,21 +1106,29 @@ function M.attach()
   return win
 end
 
---- Whether an agent is attached and listening.
+--- Whether an agent is paired (or listening).
 function M.attached()
   return attached()
 end
 
---- Start fresh: the next request starts a new session, and an attached
+--- The agent pi-nvim paired, if any: { agent = name }.
+function M.paired()
+  return paired and { agent = paired.agent } or nil
+end
+
+--- Start fresh: the next request starts a new session, and the paired
 --- agent is let go (its wait_for_request returns).
 function M.new_session()
   conversation = nil
   for _, waiter in ipairs(waiters) do
     waiter.timer:stop()
     waiter.timer:close()
-    waiter.settle("The user detached you from Neovim. Stop listening.")
+    waiter.settle("The user unpaired you from Neovim. Stop listening.")
   end
   waiters, attached_seen = {}, nil
+  if paired then
+    unpair("unpaired")
+  end
   notify("the next request starts a new session")
 end
 

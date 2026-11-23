@@ -32,7 +32,7 @@ local M = {}
 
 ---@class agent_mode.SessionOptions
 ---@field enabled? boolean
----@field mode? "start"|"attach"|"ask"
+---@field mode? "start"|"pair"|"ask"
 
 ---@class agent_mode.AxoOptions
 ---@field session? string
@@ -117,11 +117,11 @@ M.defaults = {
     -- one at a time, in order. :AgentMode new starts a fresh one. false runs
     -- each request on its own, all at once.
     enabled = true,
-    -- What a request does when no agent is attached (an agent you run
-    -- yourself, listening through the nvim-mcp server; see
-    -- :AgentMode attach). An attached agent always takes requests.
+    -- What a request does when no agent is paired with this Neovim (pi
+    -- pairs with /nvim, from pi-nvim; see :AgentMode pair). A paired agent
+    -- always takes requests.
     --   "start": start the agent for it
-    --   "attach": wait for an agent to attach, and say how
+    --   "pair": wait for an agent to pair, and say how
     --   "ask": ask which, each time
     mode = "start",
   },
@@ -186,7 +186,7 @@ function M.check(config)
     vim.validate("luamode_timeout_ms", config.luamode_timeout_ms, "number")
     vim.validate("session", config.session, "table")
     vim.validate("session.enabled", config.session.enabled, "boolean")
-    vim.validate("session.mode", config.session.mode, one_of({ "start", "attach", "ask" }))
+    vim.validate("session.mode", config.session.mode, one_of({ "start", "pair", "ask" }))
     vim.validate("axo", config.axo, "table")
     vim.validate("axo.session", config.axo.session, "string")
     vim.validate("axo.cmd", config.axo.cmd, "string")

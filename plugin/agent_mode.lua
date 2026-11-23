@@ -1,6 +1,6 @@
 -- agent-mode's entry points: one <Plug> mapping and one :AgentMode command.
 -- The rest is required when they are used; only the small registration that
--- lets an attached agent find this Neovim runs now.
+-- lets a paired agent find this Neovim runs now.
 
 if vim.g.loaded_agent_mode then
   return
@@ -70,15 +70,15 @@ local subcommands = {
     end,
   },
   new = {
-    desc = "start a new session, and let an attached agent go",
+    desc = "start a new session, and unpair the paired agent",
     run = function()
       require("agent_mode").new_session()
     end,
   },
-  attach = {
-    desc = "how to attach an agent you run yourself (through the nvim-mcp server)",
+  pair = {
+    desc = "pair an agent you run yourself with this Neovim (pi: /nvim), or see which is paired",
     run = function()
-      require("agent_mode").attach()
+      require("agent_mode").pair()
     end,
   },
   log = {
@@ -105,7 +105,7 @@ vim.api.nvim_create_user_command("AgentMode", function(opts)
 end, {
   nargs = "*",
   bang = true,
-  desc = "agent-mode: ask the agent, or :AgentMode {ask|cancel|dismiss|agent|config|new|attach|log}",
+  desc = "agent-mode: ask the agent, or :AgentMode {ask|cancel|dismiss|agent|config|new|pair|log}",
   complete = function(lead, line)
     local words = vim.split(line:gsub("^%S+%s*", ""), "%s+")
     if #words <= 1 then

@@ -142,10 +142,10 @@ One command, `:AgentMode`, with completion for its subcommands:
   [snacks.nvim](https://github.com/folke/snacks.nvim)'s picker, so every list
   is fuzzy-searchable (pi's models, for one); without snacks it falls back to
   `vim.ui.select`
-- `:AgentMode new`: start a new session with the agent, and let go of an
-  attached one
-- `:AgentMode attach`: how to attach an agent you run yourself (see
-  [Use the agent you already have open](#use-the-agent-you-already-have-open))
+- `:AgentMode new`: start a new session with the agent, and unpair the
+  paired one
+- `:AgentMode pair`: which agent is paired, and how to pair the one you run
+  yourself (see [Pair the agent you already have open](#pair-the-agent-you-already-have-open))
 - `:AgentMode log`: show the last prompt, command, session, and output
 
 ## One session per Neovim
@@ -166,44 +166,53 @@ session run one at a time: a request asked while another is running shows
 don't need each other, `session = { enabled = false }` runs each one on its own and all at
 once, as before.
 
-## Use the agent you already have open
+## Pair the agent you already have open
 
 The agent you work with all day, in Ghostty, tmux, or anywhere else, can take
-your requests too, with everything it already knows about the task. agent-mode
-serves its tools to any agent over MCP: add the server once, then tell the
-agent to listen.
+your requests too, with everything it already knows about the task. Pair it
+with a Neovim once, and from then on every request you make at your cursor
+goes to it.
 
-1. Add the nvim-mcp server to your agent (`:AgentMode attach` shows these
-   with the paths filled in):
+**pi.** Install pi-nvim once, then run `/nvim` in pi and pick a Neovim:
 
-   ```sh
-   pi install /path/to/agent-mode.nvim/pi/pi-nvim.ts
-   claude mcp add --scope user nvim-mcp -- /path/to/agent-mode.nvim/bin/nvim-mcp
-   codex mcp add nvim-mcp -- /path/to/agent-mode.nvim/bin/nvim-mcp
-   ```
+```sh
+pi install /path/to/agent-mode.nvim/pi/pi-nvim.ts
+```
 
-   For OpenCode, add it to `~/.config/opencode/opencode.json`:
-   `"mcp": { "nvim-mcp": { "type": "local", "command": ["/path/to/agent-mode.nvim/bin/nvim-mcp"] } }`.
+Each request arrives in your pi session as a message and starts a turn (or
+waits for the one running). pi works on it with the nvim-mcp tools: it edits
+the buffer, renames with the language server, answers under your line. When
+the turn ends the request is done; if pi only replied in words, the reply is
+shown under the line. `/nvim off` unpairs, and so does quitting pi. The pi
+footer shows which Neovim it is paired with, and Neovim says when it pairs
+and unpairs.
 
-2. Start the agent, in any folder, and tell it: "Listen to Neovim:
-   call nvim-mcp's wait_for_request tool, handle each request it returns
-   with nvim-mcp's tools, and call wait_for_request again after each one,
-   until I say stop." (`:AgentMode attach` copies this for you.)
+**Claude Code, Codex, OpenCode.** They cannot be handed messages from outside,
+so they pair by listening: add the nvim-mcp server once, then tell the agent
+"Pair with Neovim: call nvim-mcp's wait_for_request tool, handle each
+request it returns with nvim-mcp's tools, and call wait_for_request again
+after each one, until I say stop." (`:AgentMode pair` shows the commands with
+your paths and copies that sentence.)
 
-While it listens, requests you make at your cursor go to it instead of a new
-agent. The server connects to the Neovim in the agent's project if there is
-one, and otherwise to the Neovim you used last (focused, or asked from), from
-any folder; inside Neovim's terminal it uses that Neovim (`$NVIM`), and
-`--server <address>` picks one. Each Neovim registers itself in its state
-folder when agent-mode loads; with lazy.nvim, add `event = "VeryLazy"` so that
-happens at startup rather than on your first request. Without the listening loop, the agent can still use the tools when
-you ask it to in its own window: "look at what I have selected in Neovim",
-"rename this with the language server".
+```sh
+claude mcp add --scope user nvim-mcp -- /path/to/agent-mode.nvim/bin/nvim-mcp
+codex mcp add nvim-mcp -- /path/to/agent-mode.nvim/bin/nvim-mcp
+```
 
-When no agent is attached, `session.mode` says what a request does:
-`"start"` (the default) starts your agent as usual, `"attach"` waits for one
-to attach and shows how, and `"ask"` asks each time. `:AgentMode new` lets go
-of the attached agent.
+For OpenCode, add it to `~/.config/opencode/opencode.json`:
+`"mcp": { "nvim-mcp": { "type": "local", "command": ["/path/to/agent-mode.nvim/bin/nvim-mcp"] } }`.
+
+Unpaired, an agent with the server can still use the tools when you ask in its
+own window: "look at what I have selected in Neovim", "rename this with the
+language server". The server connects to the Neovim in the agent's project
+if there is one, and otherwise to the Neovim you used last, from any folder;
+inside Neovim's terminal it uses that Neovim (`$NVIM`). Each Neovim registers
+itself when agent-mode loads; with lazy.nvim, add `event = "VeryLazy"` so
+that happens at startup rather than on your first request.
+
+When no agent is paired, `session.mode` says what a request does: `"start"`
+(the default) starts your agent as usual, `"pair"` waits for one to pair and
+shows how, and `"ask"` asks each time. `:AgentMode new` unpairs.
 
 ## Let the agent look around and show you things
 
@@ -273,7 +282,7 @@ vim.g.agent_mode = {
   luamode_timeout_ms = 10000, -- how long its asynchronous Lua may take
   session = {
     enabled = true,        -- one agent session for every request from this Neovim
-    mode = "start",        -- with no agent attached: "start" one, "attach" (wait), or "ask"
+    mode = "start",        -- with no agent paired: "start" one, "pair" (wait for one), or "ask"
   },
 }
 ```

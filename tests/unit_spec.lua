@@ -238,7 +238,7 @@ H.test("configure changes only what it is given, at runtime", function()
 end)
 
 H.test(":AgentMode has subcommands, each completed", function()
-  H.eq({ "agent", "ask", "attach", "cancel", "config", "dismiss", "log", "new" }, vim.fn.getcompletion("AgentMode ", "cmdline"))
+  H.eq({ "agent", "ask", "cancel", "config", "dismiss", "log", "new", "pair" }, vim.fn.getcompletion("AgentMode ", "cmdline"))
   H.eq({ "claude", "codex" }, vim.fn.getcompletion("AgentMode agent c", "cmdline"))
   H.eq({ "pi", "claude", "codex", "opencode", "axo" }, vim.fn.getcompletion("AgentMode agent ", "cmdline"))
   H.truthy(vim.fn.maparg("<Plug>(AgentMode)", "n") ~= "", "<Plug>(AgentMode) is mapped in normal mode")

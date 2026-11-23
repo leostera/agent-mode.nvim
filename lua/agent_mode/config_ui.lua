@@ -237,12 +237,12 @@ local function entries()
     end,
   }
   list[#list + 1] = {
-    label = "No agent attached",
-    value = ({ start = "start one", attach = "wait for one", ask = "ask" })[config.session.mode],
+    label = "No agent paired",
+    value = ({ start = "start one", pair = "wait for one", ask = "ask" })[config.session.mode],
     change = function(done)
-      local choices = { { "start one", "start" }, { "wait for one to attach", "attach" }, { "ask each time", "ask" } }
+      local choices = { { "start one", "start" }, { "wait for one to pair", "pair" }, { "ask each time", "ask" } }
       select(choices, {
-        prompt = "When no agent is attached, a request",
+        prompt = "When no agent is paired, a request",
         format_item = function(item)
           return item[1]
         end,
@@ -255,10 +255,11 @@ local function entries()
     end,
   }
   list[#list + 1] = {
-    label = "Attach an agent",
-    value = agent_mode().attached() and "attached now" or "how to",
+    label = "Pair an agent",
+    value = agent_mode().paired() and ("paired with " .. agent_mode().paired().agent)
+      or (agent_mode().attached() and "an agent is listening" or "how to"),
     change = function()
-      agent_mode().attach() -- closes the menu: the instructions take its place
+      agent_mode().pair() -- closes the menu: the instructions take its place
     end,
   }
   local current = agent_mode().session()
